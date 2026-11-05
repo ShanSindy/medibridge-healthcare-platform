@@ -131,3 +131,69 @@ def test_database_isolation():
             database_name = cursor.fetchone()[0]
 
     assert database_name == "medibridge_test"
+
+
+def test_create_patient_empty_first_name():
+    patient_data = {
+        "first_name": "",
+        "last_name": "Patient",
+        "date_of_birth": "2000-01-01",
+        "gender": "other"
+    }
+
+    response = client.post("/patients", json=patient_data)
+
+    if response.status_code == 201:
+        patient_id = response.json()["id"]
+        client.delete(f"/patients/{patient_id}")
+
+    assert response.status_code == 422
+
+
+def test_create_patient_whitespace_first_name():
+    patient_data = {
+        "first_name": "   ",
+        "last_name": "Patient",
+        "date_of_birth": "2000-01-01",
+        "gender": "other"
+    }
+
+    response = client.post("/patients", json=patient_data)
+
+    if response.status_code == 201:
+        patient_id = response.json()["id"]
+        client.delete(f"/patients/{patient_id}")
+
+    assert response.status_code == 422
+
+def test_create_patient_future_date_of_birth():
+    patient_data = {
+        "first_name": "Future",
+        "last_name": "Patient",
+        "date_of_birth": "2099-01-01",
+        "gender": "other"
+    }
+
+    response = client.post("/patients", json=patient_data)
+
+    if response.status_code == 201:
+        patient_id = response.json()["id"]
+        client.delete(f"/patients/{patient_id}")
+
+    assert response.status_code == 422
+
+def test_create_patient_invalid_gender():
+    patient_data = {
+        "first_name": "Test",
+        "last_name": "Patient",
+        "date_of_birth": "2000-01-01",
+        "gender": "invalid_value"
+    }
+
+    response = client.post("/patients", json=patient_data)
+
+    if response.status_code == 201:
+        patient_id = response.json()["id"]
+        client.delete(f"/patients/{patient_id}")
+
+    assert response.status_code == 422
