@@ -344,3 +344,57 @@ def test_get_fhir_patients_empty_bundle(monkeypatch):
         "total": 0,
         "entry": []
     }
+
+def test_search_fhir_patients_by_family():
+    patient_data = {
+        "first_name": "Search",
+        "last_name": "UniqueFHIRFamily123",
+        "date_of_birth": "1995-05-20",
+        "gender": "female"
+    }
+
+    create_response = client.post("/patients", json=patient_data)
+    assert create_response.status_code == 201
+
+    patient_id = create_response.json()["id"]
+
+    try:
+        response = client.get(
+            "/fhir/Patient",
+            params={"family": "uniquefhirfamily123"}
+        )
+
+        assert response.status_code == 200
+
+        result = response.json()
+
+        assert result["resourceType"] == "Bundle"
+        assert result["type"] == "searchset"
+        assert result["total"] == 1
+        assert len(result["entry"]) == 1
+
+        patient = result["entry"][0]["resource"]
+
+        assert patient["id"] == str(patient_id)
+        assert patient["name"][0]["family"] == "UniqueFHIRFamily123"
+        assert patient["name"][0]["given"] == ["Search"]
+
+    finally:
+        client.delete(f"/patients/{patient_id}")
+
+def test_search_fhir_patients_no_match():
+    response = client.get(
+        "/fhir/Patient",
+        params={"family": "NonexistentFamily999"}
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result == {
+        "resourceType": "Bundle",
+        "type": "searchset",
+        "total": 0,
+        "entry": []
+    }
