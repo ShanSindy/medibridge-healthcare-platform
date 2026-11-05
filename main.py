@@ -2,6 +2,7 @@
 from database import get_connection
 from models import Patient, PatientCreate
 from fastapi import FastAPI, HTTPException
+from fhir import patient_to_fhir
 
 app = FastAPI(
     title="MediBridge",
@@ -168,3 +169,31 @@ def update_patient(patient_id: int, patient: PatientCreate):
         "date_of_birth": row[3],
         "gender": row[4]
     }
+
+@app.get("/fhir/Patient/{patient_id}")
+def get_fhir_patient(patient_id: int):
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, first_name, last_name, date_of_birth, gender
+                FROM patients
+                WHERE id = %s
+                """,
+                (patient_id,)
+            )
+
+            row = cursor.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    patient = Patient(
+        id=row[0],
+        first_name=row[1],
+        last_name=row[2],
+        date_of_birth=row[3],
+        gender=row[4]
+    )
+
+    return patient_to_fhir(patient)

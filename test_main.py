@@ -1,6 +1,9 @@
 
+from datetime import date
 from fastapi.testclient import TestClient
 from main import app
+from models import Patient
+from fhir import patient_to_fhir
 
 client = TestClient(app)
 
@@ -197,3 +200,66 @@ def test_create_patient_invalid_gender():
         client.delete(f"/patients/{patient_id}")
 
     assert response.status_code == 422
+
+def test_patient_to_fhir():
+    patient = Patient(
+        id=1,
+        first_name="Alex",
+        last_name="Morgan",
+        date_of_birth=date(1992, 4, 15),
+        gender="male"
+    )
+
+    result = patient_to_fhir(patient)
+
+    assert result == {
+        "resourceType": "Patient",
+        "id": "1",
+        "name": [
+            {
+                "use": "official",
+                "family": "Morgan",
+                "given": ["Alex"]
+            }
+        ],
+        "gender": "male",
+        "birthDate": "1992-04-15"
+    }
+
+def test_get_fhir_patient():
+    patient_data = {
+        "first_name": "FHIR",
+        "last_name": "Test",
+        "date_of_birth": "1995-06-15",
+        "gender": "female"
+    }
+
+    create_response = client.post("/patients", json=patient_data)
+    assert create_response.status_code == 201
+
+    patient_id = create_response.json()["id"]
+
+    try:
+        response = client.get(f"/fhir/Patient/{patient_id}")
+
+        assert response.status_code == 200
+
+        result = response.json()
+
+        assert result["resourceType"] == "Patient"
+        assert result["id"] == str(patient_id)
+        assert result["name"][0]["family"] == "Test"
+        assert result["name"][0]["given"] == ["FHIR"]
+        assert result["gender"] == "female"
+        assert result["birthDate"] == "1995-06-15"
+
+    finally:
+        client.delete(f"/patients/{patient_id}")
+
+def test_get_fhir_patient_not_found():
+    response = client.get("/fhir/Patient/999999")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Patient not found"
+    }
