@@ -263,3 +263,84 @@ def test_get_fhir_patient_not_found():
     assert response.json() == {
         "detail": "Patient not found"
     }
+
+def test_get_fhir_patients_bundle():
+    patient_data = {
+        "first_name": "Bundle",
+        "last_name": "Test",
+        "date_of_birth": "1998-03-20",
+        "gender": "female"
+    }
+
+    create_response = client.post("/patients", json=patient_data)
+    assert create_response.status_code == 201
+
+    patient_id = create_response.json()["id"]
+
+    try:
+        response = client.get("/fhir/Patient")
+
+        assert response.status_code == 200
+
+        result = response.json()
+
+        assert result["resourceType"] == "Bundle"
+        assert result["type"] == "searchset"
+        assert result["total"] == len(result["entry"])
+
+        matching_entries = [
+            entry
+            for entry in result["entry"]
+            if entry["resource"]["id"] == str(patient_id)
+        ]
+
+        assert len(matching_entries) == 1
+
+        patient = matching_entries[0]["resource"]
+
+        assert patient["resourceType"] == "Patient"
+        assert patient["name"][0]["family"] == "Test"
+        assert patient["name"][0]["given"] == ["Bundle"]
+        assert patient["birthDate"] == "1998-03-20"
+
+    finally:
+        client.delete(f"/patients/{patient_id}")
+
+def test_get_fhir_patients_empty_bundle(monkeypatch):
+    class FakeCursor:
+        def execute(self, query):
+            pass
+
+        def fetchall(self):
+            return []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    monkeypatch.setattr(
+        "main.get_connection",
+        lambda: FakeConnection()
+    )
+
+    response = client.get("/fhir/Patient")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "resourceType": "Bundle",
+        "type": "searchset",
+        "total": 0,
+        "entry": []
+    }

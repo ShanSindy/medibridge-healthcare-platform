@@ -197,3 +197,40 @@ def get_fhir_patient(patient_id: int):
     )
 
     return patient_to_fhir(patient)
+
+@app.get("/fhir/Patient")
+def get_fhir_patients():
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, first_name, last_name, date_of_birth, gender
+                FROM patients
+                ORDER BY id
+                """
+            )
+
+            rows = cursor.fetchall()
+
+    patients = [
+        Patient(
+            id=row[0],
+            first_name=row[1],
+            last_name=row[2],
+            date_of_birth=row[3],
+            gender=row[4]
+        )
+        for row in rows
+    ]
+
+    return {
+        "resourceType": "Bundle",
+        "type": "searchset",
+        "total": len(patients),
+        "entry": [
+            {
+                "resource": patient_to_fhir(patient)
+            }
+            for patient in patients
+        ]
+    }
