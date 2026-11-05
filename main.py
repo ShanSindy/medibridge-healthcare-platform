@@ -199,11 +199,28 @@ def get_fhir_patient(patient_id: int):
     return patient_to_fhir(patient)
 
 
+
 @app.get("/fhir/Patient")
-def get_fhir_patients(family: str | None = None):
+def get_fhir_patients(
+    family: str | None = None,
+    given: str | None = None
+):
     with get_connection() as conn:
         with conn.cursor() as cursor:
-            if family is not None:
+
+            if family is not None and given is not None:
+                cursor.execute(
+                    """
+                    SELECT id, first_name, last_name, date_of_birth, gender
+                    FROM patients
+                    WHERE LOWER(last_name) = LOWER(%s)
+                      AND LOWER(first_name) = LOWER(%s)
+                    ORDER BY id
+                    """,
+                    (family, given)
+                )
+
+            elif family is not None:
                 cursor.execute(
                     """
                     SELECT id, first_name, last_name, date_of_birth, gender
@@ -213,6 +230,18 @@ def get_fhir_patients(family: str | None = None):
                     """,
                     (family,)
                 )
+
+            elif given is not None:
+                cursor.execute(
+                    """
+                    SELECT id, first_name, last_name, date_of_birth, gender
+                    FROM patients
+                    WHERE LOWER(first_name) = LOWER(%s)
+                    ORDER BY id
+                    """,
+                    (given,)
+                )
+
             else:
                 cursor.execute(
                     """
@@ -246,4 +275,3 @@ def get_fhir_patients(family: str | None = None):
             for patient in patients
         ]
     }
-

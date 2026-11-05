@@ -398,3 +398,80 @@ def test_search_fhir_patients_no_match():
         "total": 0,
         "entry": []
     }
+
+def test_search_fhir_patients_by_given():
+    patient_data = {
+        "first_name": "UniqueFHIRGiven123",
+        "last_name": "Johnson",
+        "date_of_birth": "1995-05-20",
+        "gender": "female"
+    }
+
+    create_response = client.post("/patients", json=patient_data)
+    assert create_response.status_code == 201
+
+    patient_id = create_response.json()["id"]
+
+    try:
+        response = client.get(
+            "/fhir/Patient",
+            params={"given": "uniquefhirgiven123"}
+        )
+
+        assert response.status_code == 200
+
+        result = response.json()
+
+        assert result["resourceType"] == "Bundle"
+        assert result["type"] == "searchset"
+        assert result["total"] == 1
+        assert len(result["entry"]) == 1
+
+        patient = result["entry"][0]["resource"]
+
+        assert patient["id"] == str(patient_id)
+        assert patient["name"][0]["given"] == ["UniqueFHIRGiven123"]
+        assert patient["name"][0]["family"] == "Johnson"
+
+    finally:
+        client.delete(f"/patients/{patient_id}")
+
+def test_search_fhir_patients_by_family_and_given():
+    patient_data = {
+        "first_name": "UniqueCombinedGiven123",
+        "last_name": "UniqueCombinedFamily123",
+        "date_of_birth": "1994-08-12",
+        "gender": "male"
+    }
+
+    create_response = client.post("/patients", json=patient_data)
+    assert create_response.status_code == 201
+
+    patient_id = create_response.json()["id"]
+
+    try:
+        response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": "uniquecombinedfamily123",
+                "given": "uniquecombinedgiven123"
+            }
+        )
+
+        assert response.status_code == 200
+
+        result = response.json()
+
+        assert result["resourceType"] == "Bundle"
+        assert result["type"] == "searchset"
+        assert result["total"] == 1
+        assert len(result["entry"]) == 1
+
+        patient = result["entry"][0]["resource"]
+
+        assert patient["id"] == str(patient_id)
+        assert patient["name"][0]["family"] == "UniqueCombinedFamily123"
+        assert patient["name"][0]["given"] == ["UniqueCombinedGiven123"]
+
+    finally:
+        client.delete(f"/patients/{patient_id}")
