@@ -285,6 +285,7 @@ def get_fhir_patient(patient_id: int):
 
 
 
+
 @app.get("/fhir/Patient")
 def get_fhir_patients(
     request: Request,
@@ -293,6 +294,15 @@ def get_fhir_patients(
     count: int = Query(default=10, alias="_count", ge=1, le=100),
     offset: int = Query(default=0, alias="_offset", ge=0)
 ):
+    # Escape SQL LIKE wildcards and enable prefix matching.
+    def prefix_pattern(value: str) -> str:
+        escaped = (
+            value.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        return f"{escaped}%"
+
     with get_connection() as conn:
         with conn.cursor() as cursor:
 
@@ -301,12 +311,17 @@ def get_fhir_patients(
                     """
                     SELECT id, first_name, last_name, date_of_birth, gender
                     FROM patients
-                    WHERE LOWER(last_name) = LOWER(%s)
-                      AND LOWER(first_name) = LOWER(%s)
+                    WHERE last_name ILIKE %s
+                      AND first_name ILIKE %s
                     ORDER BY id
                     LIMIT %s OFFSET %s
                     """,
-                    (family, given, count, offset)
+                    (
+                        prefix_pattern(family),
+                        prefix_pattern(given),
+                        count,
+                        offset
+                    )
                 )
 
             elif family is not None:
@@ -314,11 +329,11 @@ def get_fhir_patients(
                     """
                     SELECT id, first_name, last_name, date_of_birth, gender
                     FROM patients
-                    WHERE LOWER(last_name) = LOWER(%s)
+                    WHERE last_name ILIKE %s
                     ORDER BY id
                     LIMIT %s OFFSET %s
                     """,
-                    (family, count, offset)
+                    (prefix_pattern(family), count, offset)
                 )
 
             elif given is not None:
@@ -326,11 +341,11 @@ def get_fhir_patients(
                     """
                     SELECT id, first_name, last_name, date_of_birth, gender
                     FROM patients
-                    WHERE LOWER(first_name) = LOWER(%s)
+                    WHERE first_name ILIKE %s
                     ORDER BY id
                     LIMIT %s OFFSET %s
                     """,
-                    (given, count, offset)
+                    (prefix_pattern(given), count, offset)
                 )
 
             else:
@@ -345,16 +360,20 @@ def get_fhir_patients(
                 )
 
             rows = cursor.fetchall()
-            
+
+            # Count all matching patients before pagination.
             if family is not None and given is not None:
                 cursor.execute(
                     """
                     SELECT COUNT(*)
                     FROM patients
-                    WHERE LOWER(last_name) = LOWER(%s)
-                      AND LOWER(first_name) = LOWER(%s)
+                    WHERE last_name ILIKE %s
+                      AND first_name ILIKE %s
                     """,
-                    (family, given)
+                    (
+                        prefix_pattern(family),
+                        prefix_pattern(given)
+                    )
                 )
 
             elif family is not None:
@@ -362,9 +381,9 @@ def get_fhir_patients(
                     """
                     SELECT COUNT(*)
                     FROM patients
-                    WHERE LOWER(last_name) = LOWER(%s)
+                    WHERE last_name ILIKE %s
                     """,
-                    (family,)
+                    (prefix_pattern(family),)
                 )
 
             elif given is not None:
@@ -372,9 +391,9 @@ def get_fhir_patients(
                     """
                     SELECT COUNT(*)
                     FROM patients
-                    WHERE LOWER(first_name) = LOWER(%s)
+                    WHERE first_name ILIKE %s
                     """,
-                    (given,)
+                    (prefix_pattern(given),)
                 )
 
             else:
@@ -384,7 +403,7 @@ def get_fhir_patients(
 
             total_matches = cursor.fetchone()[0]
 
-
+    # Convert database rows into Patient models.
     patients = [
         Patient(
             id=row[0],
@@ -396,7 +415,7 @@ def get_fhir_patients(
         for row in rows
     ]
 
-    
+    # Build pagination URLs while preserving search filters.
     def page_url(page_offset: int) -> str:
         params = {}
 
@@ -430,8 +449,7 @@ def get_fhir_patients(
             "url": page_url(max(0, offset - count))
         })
 
-
-   
+    # Return a FHIR searchset Bundle.
     return {
         "resourceType": "Bundle",
         "type": "searchset",
@@ -450,4 +468,3 @@ def get_fhir_patients(
             for patient in patients
         ]
     }
-

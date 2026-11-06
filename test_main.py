@@ -952,3 +952,117 @@ def test_fhir_capability_statement_search_parameters():
     assert parameters["given"]["documentation"] == (
         "Search patients by given name."
     )
+
+def test_fhir_patient_family_prefix_search():
+    # Create a patient with a known family name.
+    create_response = client.post(
+        "/patients",
+        json={
+            "first_name": "Michael",
+            "last_name": "Johnson",
+            "date_of_birth": "1995-05-15",
+            "gender": "male"
+        }
+    )
+
+    assert create_response.status_code in (200, 201)
+
+    patient_id = create_response.json()["id"]
+
+    # Search using only the beginning of the family name.
+    response = client.get("/fhir/Patient?family=jOhN")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["resourceType"] == "Bundle"
+    assert data["type"] == "searchset"
+
+    matching_ids = [
+        entry["resource"]["id"]
+        for entry in data["entry"]
+    ]
+
+    assert str(patient_id) in [str(value) for value in matching_ids]
+
+def test_fhir_patient_given_prefix_search():
+    # Create a patient with a known given name.
+    create_response = client.post(
+        "/patients",
+        json={
+            "first_name": "Alexander",
+            "last_name": "Williams",
+            "date_of_birth": "1996-08-20",
+            "gender": "male"
+        }
+    )
+
+    assert create_response.status_code in (200, 201)
+
+    patient_id = create_response.json()["id"]
+
+    # Search using a partial, mixed-case given name.
+    response = client.get("/fhir/Patient?given=aleX")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["resourceType"] == "Bundle"
+    assert data["type"] == "searchset"
+
+    matching_ids = [
+        entry["resource"]["id"]
+        for entry in data["entry"]
+    ]
+
+    assert str(patient_id) in [
+        str(value) for value in matching_ids
+    ]
+
+def test_fhir_patient_search_escapes_wildcards():
+    # Create a patient with a normal family name.
+    create_response = client.post(
+        "/patients",
+        json={
+            "first_name": "Daniel",
+            "last_name": "Smith",
+            "date_of_birth": "1994-06-12",
+            "gender": "male"
+        }
+    )
+
+    assert create_response.status_code in (200, 201)
+
+    patient_id = create_response.json()["id"]
+
+    # Percent sign must not behave as a wildcard.
+    percent_response = client.get(
+        "/fhir/Patient",
+        params={"family": "Sm%"}
+    )
+
+    assert percent_response.status_code == 200
+
+    percent_ids = [
+        str(entry["resource"]["id"])
+        for entry in percent_response.json()["entry"]
+    ]
+
+    assert str(patient_id) not in percent_ids
+
+    # Underscore must not behave as a wildcard.
+    underscore_response = client.get(
+        "/fhir/Patient",
+        params={"family": "Sm_th"}
+    )
+
+    assert underscore_response.status_code == 200
+
+    underscore_ids = [
+        str(entry["resource"]["id"])
+        for entry in underscore_response.json()["entry"]
+    ]
+
+    assert str(patient_id) not in underscore_ids
