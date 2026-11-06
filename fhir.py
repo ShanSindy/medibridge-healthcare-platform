@@ -2,8 +2,12 @@
 from models import Patient
 
 
-def patient_to_fhir(patient: Patient) -> dict:
-    return {
+
+def patient_to_fhir(
+    patient: Patient,
+    identifiers: list[dict] | None = None
+) -> dict:
+    resource = {
         "resourceType": "Patient",
         "id": str(patient.id),
         "name": [
@@ -16,6 +20,18 @@ def patient_to_fhir(patient: Patient) -> dict:
         "gender": patient.gender,
         "birthDate": patient.date_of_birth.isoformat()
     }
+
+    if identifiers:
+        resource["identifier"] = [
+            {
+                "system": identifier["system"],
+                "value": identifier["value"]
+            }
+            for identifier in identifiers
+        ]
+
+    return resource
+
 
 def create_operation_outcome(
     code: str,

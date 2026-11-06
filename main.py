@@ -1,5 +1,5 @@
 
-from database import get_connection
+from database import get_connection, get_patient_identifiers
 from models import Patient, PatientCreate
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -247,6 +247,7 @@ def get_fhir_metadata():
     }
 
 
+
 @app.get("/fhir/Patient/{patient_id}")
 def get_fhir_patient(patient_id: int):
     with get_connection() as conn:
@@ -280,7 +281,10 @@ def get_fhir_patient(patient_id: int):
         gender=row[4]
     )
 
-    return patient_to_fhir(patient)
+    return patient_to_fhir(
+        patient,
+        identifiers=get_patient_identifiers(patient_id)
+    )
 
 
 

@@ -15,3 +15,26 @@ def get_connection():
         user=os.getenv("DB_USER"),
         password=os.getenv("DB_PASSWORD"),
     )
+
+def get_patient_identifiers(patient_id: int) -> list[dict]:
+    with get_connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT system, value
+                FROM patient_identifiers
+                WHERE patient_id = %s
+                ORDER BY id
+                """,
+                (patient_id,)
+            )
+
+            rows = cursor.fetchall()
+
+    return [
+        {
+            "system": row[0],
+            "value": row[1]
+        }
+        for row in rows
+    ]

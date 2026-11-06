@@ -1066,3 +1066,61 @@ def test_fhir_patient_search_escapes_wildcards():
     ]
 
     assert str(patient_id) not in underscore_ids
+
+
+def test_fhir_patient_includes_identifier():
+    from database import get_connection
+
+    patient_id = None
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO patients
+                        (first_name, last_name, date_of_birth, gender)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    ("Identifier", "Test", "1995-06-15", "female")
+                )
+                patient_id = cursor.fetchone()[0]
+
+                cursor.execute(
+                    """
+                    INSERT INTO patient_identifiers
+                        (patient_id, system, value)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (
+                        patient_id,
+                        "https://medibridge.example.org/mrn",
+                        f"TEST-MRN-{patient_id}"
+                    )
+                )
+
+        response = client.get(f"/fhir/Patient/{patient_id}")
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["resourceType"] == "Patient"
+        assert data["id"] == str(patient_id)
+        assert data["identifier"] == [
+            {
+                "system": "https://medibridge.example.org/mrn",
+                "value": f"TEST-MRN-{patient_id}"
+            }
+        ]
+
+    finally:
+        if patient_id is not None:
+            with get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM patients WHERE id = %s",
+                        (patient_id,)
+                    )
+
