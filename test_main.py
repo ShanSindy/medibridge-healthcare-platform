@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from main import app
 from models import Patient
 from fhir import patient_to_fhir
+from fhir import create_operation_outcome
 
 client = TestClient(app)
 
@@ -256,13 +257,25 @@ def test_get_fhir_patient():
     finally:
         client.delete(f"/patients/{patient_id}")
 
+
 def test_get_fhir_patient_not_found():
     response = client.get("/fhir/Patient/999999")
 
     assert response.status_code == 404
+
     assert response.json() == {
-        "detail": "Patient not found"
+        "resourceType": "OperationOutcome",
+        "issue": [
+            {
+                "severity": "error",
+                "code": "not-found",
+                "diagnostics": "Patient not found"
+            }
+        ]
     }
+
+    assert response.headers["content-type"] == "application/fhir+json"
+
 
 def test_get_fhir_patients_bundle():
     patient_data = {
@@ -760,3 +773,101 @@ def test_fhir_patient_invalid_pagination():
             f"Expected 422 for {params}, "
             f"got {response.status_code}"
         )
+
+def test_fhir_patient_bundle_full_url():
+    patient_id = None
+
+    try:
+        # Create a test patient
+        response = client.post(
+            "/patients",
+            json={
+                "first_name": "FullUrlTest",
+                "last_name": "UniqueFullUrl187",
+                "date_of_birth": "1995-05-20",
+                "gender": "female"
+            }
+        )
+
+        assert response.status_code == 201
+        patient_id = response.json()["id"]
+
+        # Search for the test patient
+        response = client.get(
+            "/fhir/Patient",
+            params={"family": "UniqueFullUrl187"}
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["resourceType"] == "Bundle"
+        assert data["total"] == 1
+        assert len(data["entry"]) == 1
+
+        # Verify fullUrl
+        entry = data["entry"][0]
+
+        expected_url = (
+            f"http://testserver/fhir/Patient/{patient_id}"
+        )
+
+        assert entry["fullUrl"] == expected_url
+        assert entry["resource"]["id"] == str(patient_id)
+
+    finally:
+        if patient_id is not None:
+            client.delete(f"/patients/{patient_id}")
+
+def test_create_operation_outcome():
+    outcome = create_operation_outcome(
+        code="not-found",
+        diagnostics="Patient not found"
+    )
+
+    assert outcome == {
+        "resourceType": "OperationOutcome",
+        "issue": [
+            {
+                "severity": "error",
+                "code": "not-found",
+                "diagnostics": "Patient not found"
+            }
+        ]
+    }
+
+def test_fhir_invalid_pagination_operation_outcome():
+    response = client.get("/fhir/Patient?_count=0")
+
+    assert response.status_code == 422
+
+    assert response.headers["content-type"] == "application/fhir+json"
+
+    assert response.json() == {
+        "resourceType": "OperationOutcome",
+        "issue": [
+            {
+                "severity": "error",
+                "code": "invalid",
+                "diagnostics": "Invalid FHIR request parameters"
+            }
+        ]
+    }
+
+def test_regular_patient_validation_error():
+    response = client.get("/patients/abc")
+
+    assert response.status_code == 422
+
+    assert response.headers["content-type"] == "application/json"
+
+    data = response.json()
+
+    assert "detail" in data
+    assert isinstance(data["detail"], list)
+
+    assert data["detail"][0]["loc"] == [
+        "path",
+        "patient_id"
+    ]

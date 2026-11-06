@@ -2,14 +2,34 @@
 from database import get_connection
 from models import Patient, PatientCreate
 from fastapi import FastAPI, HTTPException, Query, Request
-from fhir import patient_to_fhir
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from fhir import patient_to_fhir, create_operation_outcome
 from urllib.parse import urlencode
 
-app = FastAPI(
-    title="MediBridge",
-    description="Healthcare Integration & Interoperability Platform",
-    version="0.1.0"
-)
+app = FastAPI()
+
+
+@app.exception_handler(RequestValidationError)
+async def fhir_validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError
+):
+    if request.url.path.startswith("/fhir/"):
+        return JSONResponse(
+            status_code=422,
+            content=create_operation_outcome(
+                code="invalid",
+                diagnostics="Invalid FHIR request parameters"
+            ),
+            media_type="application/fhir+json"
+        )
+
+    return await request_validation_exception_handler(
+        request,
+        exc
+    )
 
 @app.get("/")
 def home():
@@ -172,6 +192,9 @@ def update_patient(patient_id: int, patient: PatientCreate):
     }
 
 @app.get("/fhir/Patient/{patient_id}")
+
+
+@app.get("/fhir/Patient/{patient_id}")
 def get_fhir_patient(patient_id: int):
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -187,7 +210,14 @@ def get_fhir_patient(patient_id: int):
             row = cursor.fetchone()
 
     if row is None:
-        raise HTTPException(status_code=404, detail="Patient not found")
+        return JSONResponse(
+            status_code=404,
+            content=create_operation_outcome(
+                code="not-found",
+                diagnostics="Patient not found"
+            ),
+            media_type="application/fhir+json"
+        )
 
     patient = Patient(
         id=row[0],
@@ -198,6 +228,7 @@ def get_fhir_patient(patient_id: int):
     )
 
     return patient_to_fhir(patient)
+
 
 
 
@@ -347,6 +378,7 @@ def get_fhir_patients(
         })
 
 
+   
     return {
         "resourceType": "Bundle",
         "type": "searchset",
@@ -354,8 +386,15 @@ def get_fhir_patients(
         "link": links,
         "entry": [
             {
+                "fullUrl": str(
+                    request.url_for(
+                        "get_fhir_patient",
+                        patient_id=patient.id
+                    )
+                ),
                 "resource": patient_to_fhir(patient)
             }
             for patient in patients
         ]
     }
+
