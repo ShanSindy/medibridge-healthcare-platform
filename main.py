@@ -191,7 +191,40 @@ def update_patient(patient_id: int, patient: PatientCreate):
         "gender": row[4]
     }
 
-@app.get("/fhir/Patient/{patient_id}")
+
+
+@app.get("/fhir/metadata")
+def get_fhir_metadata():
+    return {
+        "resourceType": "CapabilityStatement",
+        "status": "active",
+        "date": "2026-11-06",
+        "kind": "instance",
+        "software": {
+            "name": "MediBridge Healthcare Platform",
+            "version": "0.1.0"
+        },
+        "implementation": {
+            "description": "MediBridge FHIR API"
+        },
+        "fhirVersion": "4.0.1",
+        "format": ["application/fhir+json"],
+        "rest": [
+            {
+                "mode": "server",
+                "resource": [
+                    {
+                        "type": "Patient",
+                        "profile": "http://hl7.org/fhir/StructureDefinition/Patient",
+                        "interaction": [
+                            {"code": "read"},
+                            {"code": "search-type"}
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
 
 
 @app.get("/fhir/Patient/{patient_id}")

@@ -871,3 +871,40 @@ def test_regular_patient_validation_error():
         "path",
         "patient_id"
     ]
+
+def test_fhir_capability_statement():
+    response = client.get("/fhir/metadata")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["resourceType"] == "CapabilityStatement"
+    assert data["status"] == "active"
+    assert data["kind"] == "instance"
+    assert data["fhirVersion"] == "4.0.1"
+    assert "application/fhir+json" in data["format"]
+    assert data["date"] == "2026-11-06"
+    assert data["software"]["name"] == "MediBridge Healthcare Platform"
+    assert data["software"]["version"] == "0.1.0"
+    assert data["implementation"]["description"] == "MediBridge FHIR API"
+    assert data["rest"][0]["resource"][0]["profile"] == (
+        "http://hl7.org/fhir/StructureDefinition/Patient"
+    )
+
+
+    rest = data["rest"][0]
+
+    assert rest["mode"] == "server"
+
+    patient_resource = rest["resource"][0]
+
+    assert patient_resource["type"] == "Patient"
+
+    interactions = [
+        interaction["code"]
+        for interaction in patient_resource["interaction"]
+    ]
+
+    assert "read" in interactions
+    assert "search-type" in interactions
