@@ -1,8 +1,9 @@
 
 from database import get_connection
 from models import Patient, PatientCreate
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fhir import patient_to_fhir
+from urllib.parse import urlencode
 
 app = FastAPI(
     title="MediBridge",
@@ -202,8 +203,11 @@ def get_fhir_patient(patient_id: int):
 
 @app.get("/fhir/Patient")
 def get_fhir_patients(
+    request: Request,
     family: str | None = None,
-    given: str | None = None
+    given: str | None = None,
+    count: int = Query(default=10, alias="_count", ge=1, le=100),
+    offset: int = Query(default=0, alias="_offset", ge=0)
 ):
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -216,8 +220,9 @@ def get_fhir_patients(
                     WHERE LOWER(last_name) = LOWER(%s)
                       AND LOWER(first_name) = LOWER(%s)
                     ORDER BY id
+                    LIMIT %s OFFSET %s
                     """,
-                    (family, given)
+                    (family, given, count, offset)
                 )
 
             elif family is not None:
@@ -227,8 +232,9 @@ def get_fhir_patients(
                     FROM patients
                     WHERE LOWER(last_name) = LOWER(%s)
                     ORDER BY id
+                    LIMIT %s OFFSET %s
                     """,
-                    (family,)
+                    (family, count, offset)
                 )
 
             elif given is not None:
@@ -238,8 +244,9 @@ def get_fhir_patients(
                     FROM patients
                     WHERE LOWER(first_name) = LOWER(%s)
                     ORDER BY id
+                    LIMIT %s OFFSET %s
                     """,
-                    (given,)
+                    (given, count, offset)
                 )
 
             else:
@@ -248,10 +255,51 @@ def get_fhir_patients(
                     SELECT id, first_name, last_name, date_of_birth, gender
                     FROM patients
                     ORDER BY id
-                    """
+                    LIMIT %s OFFSET %s
+                    """,
+                    (count, offset)
                 )
 
             rows = cursor.fetchall()
+            
+            if family is not None and given is not None:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM patients
+                    WHERE LOWER(last_name) = LOWER(%s)
+                      AND LOWER(first_name) = LOWER(%s)
+                    """,
+                    (family, given)
+                )
+
+            elif family is not None:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM patients
+                    WHERE LOWER(last_name) = LOWER(%s)
+                    """,
+                    (family,)
+                )
+
+            elif given is not None:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM patients
+                    WHERE LOWER(first_name) = LOWER(%s)
+                    """,
+                    (given,)
+                )
+
+            else:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM patients"
+                )
+
+            total_matches = cursor.fetchone()[0]
+
 
     patients = [
         Patient(
@@ -264,10 +312,46 @@ def get_fhir_patients(
         for row in rows
     ]
 
+    
+    def page_url(page_offset: int) -> str:
+        params = {}
+
+        if family is not None:
+            params["family"] = family
+
+        if given is not None:
+            params["given"] = given
+
+        params["_count"] = count
+        params["_offset"] = page_offset
+
+        return f"{request.url.path}?{urlencode(params)}"
+
+    links = [
+        {
+            "relation": "self",
+            "url": page_url(offset)
+        }
+    ]
+
+    if offset + count < total_matches:
+        links.append({
+            "relation": "next",
+            "url": page_url(offset + count)
+        })
+
+    if offset > 0:
+        links.append({
+            "relation": "previous",
+            "url": page_url(max(0, offset - count))
+        })
+
+
     return {
         "resourceType": "Bundle",
         "type": "searchset",
-        "total": len(patients),
+        "total": total_matches,
+        "link": links,
         "entry": [
             {
                 "resource": patient_to_fhir(patient)

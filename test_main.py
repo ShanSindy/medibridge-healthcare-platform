@@ -306,19 +306,24 @@ def test_get_fhir_patients_bundle():
     finally:
         client.delete(f"/patients/{patient_id}")
 
+
 def test_get_fhir_patients_empty_bundle(monkeypatch):
     class FakeCursor:
-        def execute(self, query):
+        def execute(self, query, params=None):
             pass
 
         def fetchall(self):
             return []
+
+        def fetchone(self):
+            return (0,)
 
         def __enter__(self):
             return self
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
+
 
     class FakeConnection:
         def cursor(self):
@@ -338,12 +343,20 @@ def test_get_fhir_patients_empty_bundle(monkeypatch):
     response = client.get("/fhir/Patient")
 
     assert response.status_code == 200
+   
     assert response.json() == {
         "resourceType": "Bundle",
         "type": "searchset",
         "total": 0,
+        "link": [
+            {
+                "relation": "self",
+                "url": "/fhir/Patient?_count=10&_offset=0"
+            }
+        ],
         "entry": []
     }
+
 
 def test_search_fhir_patients_by_family():
     patient_data = {
@@ -392,12 +405,20 @@ def test_search_fhir_patients_no_match():
 
     result = response.json()
 
+   
     assert result == {
         "resourceType": "Bundle",
         "type": "searchset",
         "total": 0,
+        "link": [
+            {
+                "relation": "self",
+                "url": "/fhir/Patient?family=NonexistentFamily999&_count=10&_offset=0"
+            }
+        ],
         "entry": []
     }
+
 
 def test_search_fhir_patients_by_given():
     patient_data = {
@@ -475,3 +496,267 @@ def test_search_fhir_patients_by_family_and_given():
 
     finally:
         client.delete(f"/patients/{patient_id}")
+
+def test_fhir_patient_count_pagination():
+    patient_ids = []
+
+    try:
+        for i in range(3):
+            response = client.post(
+                "/patients",
+                json={
+                    "first_name": f"Pagination{i}",
+                    "last_name": "UniquePaginationTest174",
+                    "date_of_birth": "1995-05-20",
+                    "gender": "female"
+                }
+            )
+
+            assert response.status_code == 201
+            patient_ids.append(response.json()["id"])
+
+        response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": "UniquePaginationTest174",
+                "_count": 2
+            }
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["resourceType"] == "Bundle"
+        assert data["type"] == "searchset"
+        assert len(data["entry"]) == 2
+
+    finally:
+        for patient_id in patient_ids:
+            client.delete(f"/patients/{patient_id}")
+
+def test_fhir_patient_offset_pagination():
+    patient_ids = []
+    family = "UniqueOffsetTest177"
+
+    try:
+        for i in range(3):
+            response = client.post(
+                "/patients",
+                json={
+                    "first_name": f"OffsetPatient{i}",
+                    "last_name": family,
+                    "date_of_birth": "1995-05-20",
+                    "gender": "female"
+                }
+            )
+
+            assert response.status_code == 201
+            patient_ids.append(response.json()["id"])
+
+        # First page
+        first_response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": family,
+                "_count": 2,
+                "_offset": 0
+            }
+        )
+
+        assert first_response.status_code == 200
+        first_entries = first_response.json()["entry"]
+
+        assert len(first_entries) == 2
+
+        # Second page
+        second_response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": family,
+                "_count": 2,
+                "_offset": 2
+            }
+        )
+
+        assert second_response.status_code == 200
+        second_entries = second_response.json()["entry"]
+
+        assert len(second_entries) == 1
+
+        # Verify correct records and ordering
+        first_ids = [
+            entry["resource"]["id"]
+            for entry in first_entries
+        ]
+
+        second_ids = [
+            entry["resource"]["id"]
+            for entry in second_entries
+        ]
+
+        assert first_ids == [
+            str(patient_ids[0]),
+            str(patient_ids[1])
+        ]
+
+        assert second_ids == [str(patient_ids[2])]
+
+    finally:
+        for patient_id in patient_ids:
+            client.delete(f"/patients/{patient_id}")
+
+def test_fhir_patient_total_across_pages():
+    patient_ids = []
+    family = "UniqueTotalTest180"
+
+    try:
+        for i in range(3):
+            response = client.post(
+                "/patients",
+                json={
+                    "first_name": f"TotalPatient{i}",
+                    "last_name": family,
+                    "date_of_birth": "1995-05-20",
+                    "gender": "female"
+                }
+            )
+
+            assert response.status_code == 201
+            patient_ids.append(response.json()["id"])
+
+        # Request the first page
+        first_response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": family,
+                "_count": 2,
+                "_offset": 0
+            }
+        )
+
+        assert first_response.status_code == 200
+        first_data = first_response.json()
+
+        assert first_data["total"] == 3
+        assert len(first_data["entry"]) == 2
+
+        # Request the second page
+        second_response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": family,
+                "_count": 2,
+                "_offset": 2
+            }
+        )
+
+        assert second_response.status_code == 200
+        second_data = second_response.json()
+
+        assert second_data["total"] == 3
+        assert len(second_data["entry"]) == 1
+
+    finally:
+        for patient_id in patient_ids:
+            client.delete(f"/patients/{patient_id}")
+
+def test_fhir_patient_pagination_links():
+    patient_ids = []
+    family = "UniqueLinksTest182"
+
+    try:
+        for i in range(3):
+            response = client.post(
+                "/patients",
+                json={
+                    "first_name": f"LinkPatient{i}",
+                    "last_name": family,
+                    "date_of_birth": "1995-05-20",
+                    "gender": "female"
+                }
+            )
+
+            assert response.status_code == 201
+            patient_ids.append(response.json()["id"])
+
+        # First page
+        first_response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": family,
+                "_count": 2,
+                "_offset": 0
+            }
+        )
+
+        assert first_response.status_code == 200
+        first_data = first_response.json()
+
+        first_links = {
+            link["relation"]: link["url"]
+            for link in first_data["link"]
+        }
+
+        assert first_links["self"] == (
+            f"/fhir/Patient?family={family}&_count=2&_offset=0"
+        )
+
+        assert first_links["next"] == (
+            f"/fhir/Patient?family={family}&_count=2&_offset=2"
+        )
+
+        assert "previous" not in first_links
+
+        # Second page
+        second_response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": family,
+                "_count": 2,
+                "_offset": 2
+            }
+        )
+
+        assert second_response.status_code == 200
+        second_data = second_response.json()
+
+        second_links = {
+            link["relation"]: link["url"]
+            for link in second_data["link"]
+        }
+
+        assert second_links["self"] == (
+            f"/fhir/Patient?family={family}&_count=2&_offset=2"
+        )
+
+        assert second_links["previous"] == (
+            f"/fhir/Patient?family={family}&_count=2&_offset=0"
+        )
+
+        assert "next" not in second_links
+
+    finally:
+        for patient_id in patient_ids:
+            client.delete(f"/patients/{patient_id}")
+
+def test_fhir_patient_invalid_pagination():
+    invalid_cases = [
+        {"_count": 0},
+        {"_count": 101},
+        {"_count": -1},
+        {"_count": "abc"},
+        {"_offset": -1},
+        {"_offset": "abc"}
+    ]
+
+    for params in invalid_cases:
+        response = client.get(
+            "/fhir/Patient",
+            params=params
+        )
+
+        assert response.status_code == 422, (
+            f"Expected 422 for {params}, "
+            f"got {response.status_code}"
+        )
