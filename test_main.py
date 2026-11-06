@@ -880,7 +880,19 @@ def test_fhir_capability_statement():
     data = response.json()
 
     assert data["resourceType"] == "CapabilityStatement"
+    
+    assert data["name"] == "MediBridgeCapabilityStatement"
+
+    assert data["title"] == (
+        "MediBridge FHIR R4 Capability Statement"
+    )
+
     assert data["status"] == "active"
+    assert data["publisher"] == "MediBridge Healthcare Platform"
+    assert data["description"] == (
+        "MediBridge is a healthcare interoperability platform "
+        "providing FHIR R4 Patient resource access and search."
+    )
     assert data["kind"] == "instance"
     assert data["fhirVersion"] == "4.0.1"
     assert "application/fhir+json" in data["format"]
@@ -908,3 +920,35 @@ def test_fhir_capability_statement():
 
     assert "read" in interactions
     assert "search-type" in interactions
+
+def test_fhir_capability_statement_search_parameters():
+    response = client.get("/fhir/metadata")
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    patient_resource = data["rest"][0]["resource"][0]
+
+    search_parameters = patient_resource["searchParam"]
+
+    assert len(search_parameters) == 2
+
+    parameters = {
+        parameter["name"]: parameter
+        for parameter in search_parameters
+    }
+
+    assert "family" in parameters
+    assert "given" in parameters
+
+    assert parameters["family"]["type"] == "string"
+    assert parameters["given"]["type"] == "string"
+
+    assert parameters["family"]["documentation"] == (
+        "Search patients by family name."
+    )
+
+    assert parameters["given"]["documentation"] == (
+        "Search patients by given name."
+    )

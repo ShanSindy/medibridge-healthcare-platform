@@ -193,12 +193,20 @@ def update_patient(patient_id: int, patient: PatientCreate):
 
 
 
+
 @app.get("/fhir/metadata")
 def get_fhir_metadata():
     return {
         "resourceType": "CapabilityStatement",
+        "name": "MediBridgeCapabilityStatement",
+        "title": "MediBridge FHIR R4 Capability Statement",
         "status": "active",
         "date": "2026-11-06",
+        "publisher": "MediBridge Healthcare Platform",
+        "description": (
+            "MediBridge is a healthcare interoperability platform "
+            "providing FHIR R4 Patient resource access and search."
+        ),
         "kind": "instance",
         "software": {
             "name": "MediBridge Healthcare Platform",
@@ -219,6 +227,18 @@ def get_fhir_metadata():
                         "interaction": [
                             {"code": "read"},
                             {"code": "search-type"}
+                        ],
+                        "searchParam": [
+                            {
+                                "name": "family",
+                                "type": "string",
+                                "documentation": "Search patients by family name."
+                            },
+                            {
+                                "name": "given",
+                                "type": "string",
+                                "documentation": "Search patients by given name."
+                            }
                         ]
                     }
                 ]
