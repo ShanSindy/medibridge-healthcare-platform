@@ -979,8 +979,13 @@ def test_fhir_patient_family_prefix_search():
     patient_id = create_response.json()["id"]
 
     # Search using only the beginning of the family name.
-    response = client.get("/fhir/Patient?family=jOhN")
-
+    response = client.get(
+    "/fhir/Patient",
+    params={
+        "family": "jOhN",
+        "_count": 100
+    }
+)
     assert response.status_code == 200
 
     data = response.json()
@@ -1012,7 +1017,13 @@ def test_fhir_patient_given_prefix_search():
     patient_id = create_response.json()["id"]
 
     # Search using a partial, mixed-case given name.
-    response = client.get("/fhir/Patient?given=aleX")
+    response = client.get(
+    "/fhir/Patient",
+    params={
+        "given": "aleX",
+        "_count": 100
+    }
+)
 
     assert response.status_code == 200
 
