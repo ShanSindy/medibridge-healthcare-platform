@@ -5,6 +5,7 @@ from main import app
 from models import Patient
 from fhir import patient_to_fhir
 from fhir import create_operation_outcome
+from database import get_connection
 
 client = TestClient(app)
 
@@ -940,7 +941,7 @@ def test_fhir_capability_statement_search_parameters():
 
     search_parameters = patient_resource["searchParam"]
 
-    assert len(search_parameters) == 2
+    assert len(search_parameters) == 3
 
     parameters = {
         parameter["name"]: parameter
@@ -1201,3 +1202,283 @@ def test_fhir_patient_search_includes_identifier():
                         "DELETE FROM patients WHERE id = %s",
                         (patient_id,)
                     )
+
+def test_fhir_patient_search_by_identifier():
+    patient_data = {
+        "first_name": "IdentifierSearch",
+        "last_name": "TestPatient",
+        "date_of_birth": "1996-08-12",
+        "gender": "female"
+    }
+
+    create_response = client.post(
+        "/patients",
+        json=patient_data
+    )
+    assert create_response.status_code == 201
+
+    patient_id = create_response.json()["id"]
+
+    system = "https://medibridge.example.org/mrn"
+    mrn = f"TEST-SEARCH-MRN-{patient_id}"
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO patient_identifiers
+                        (patient_id, system, value)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (patient_id, system, mrn)
+                )
+            conn.commit()
+
+        # Search using the MRN value alone.
+        response = client.get(
+            "/fhir/Patient",
+            params={"identifier": mrn}
+        )
+
+        assert response.status_code == 200
+
+        result = response.json()
+        assert result["resourceType"] == "Bundle"
+        assert result["type"] == "searchset"
+        assert result["total"] == 1
+        assert len(result["entry"]) == 1
+
+        patient = result["entry"][0]["resource"]
+
+        assert patient["id"] == str(patient_id)
+        assert patient["identifier"] == [
+            {"system": system, "value": mrn}
+        ]
+
+        # Search using the identifier system and value.
+        response = client.get(
+            "/fhir/Patient",
+            params={
+                "identifier": f"{system}|{mrn}"
+            }
+        )
+
+        assert response.status_code == 200
+
+        result = response.json()
+        assert result["total"] == 1
+        assert len(result["entry"]) == 1
+        assert result["entry"][0]["resource"]["id"] == str(patient_id)
+
+    finally:
+        # Deleting the patient also deletes its identifiers
+        # through the ON DELETE CASCADE foreign key.
+        client.delete(f"/patients/{patient_id}")
+
+def test_fhir_patient_search_identifier_no_match():
+    # Search for an MRN that does not exist.
+    response = client.get(
+        "/fhir/Patient",
+        params={
+            "identifier": "NONEXISTENT-MRN-999999"
+        }
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["resourceType"] == "Bundle"
+    assert result["type"] == "searchset"
+    assert result["total"] == 0
+    assert result["entry"] == []
+
+    # Search with an incorrect identifier system.
+    response = client.get(
+        "/fhir/Patient",
+        params={
+            "identifier": (
+                "https://wrong.example.org/mrn"
+                "|NONEXISTENT-MRN-999999"
+            )
+        }
+    )
+
+    assert response.status_code == 200
+
+    result = response.json()
+
+    assert result["total"] == 0
+    assert result["entry"] == []
+
+def test_fhir_patient_search_wrong_identifier_system():
+    patient_data = {
+        "first_name": "SystemCheck",
+        "last_name": "TestPatient",
+        "date_of_birth": "1994-05-18",
+        "gender": "male"
+    }
+
+    create_response = client.post(
+        "/patients",
+        json=patient_data
+    )
+    assert create_response.status_code == 201
+
+    patient_id = create_response.json()["id"]
+
+    correct_system = "https://medibridge.example.org/mrn"
+    wrong_system = "https://wrong.example.org/mrn"
+    mrn = f"TEST-SYSTEM-MRN-{patient_id}"
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO patient_identifiers
+                        (patient_id, system, value)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (patient_id, correct_system, mrn)
+                )
+            conn.commit()
+
+        # The correct identifier system must find the patient.
+        correct_response = client.get(
+            "/fhir/Patient",
+            params={
+                "identifier": f"{correct_system}|{mrn}"
+            }
+        )
+
+        assert correct_response.status_code == 200
+        assert correct_response.json()["total"] == 1
+        assert (
+            correct_response.json()["entry"][0]["resource"]["id"]
+            == str(patient_id)
+        )
+
+        # The wrong system must NOT find the same patient.
+        wrong_response = client.get(
+            "/fhir/Patient",
+            params={
+                "identifier": f"{wrong_system}|{mrn}"
+            }
+        )
+
+        assert wrong_response.status_code == 200
+
+        result = wrong_response.json()
+
+        assert result["resourceType"] == "Bundle"
+        assert result["type"] == "searchset"
+        assert result["total"] == 0
+        assert result["entry"] == []
+
+    finally:
+        client.delete(f"/patients/{patient_id}")
+
+def test_fhir_patient_search_combined_name_and_identifier():
+    patient_data = {
+        "first_name": "CombinedSearch",
+        "last_name": "IdentifierTest",
+        "date_of_birth": "1993-07-21",
+        "gender": "female"
+    }
+
+    create_response = client.post(
+        "/patients",
+        json=patient_data
+    )
+    assert create_response.status_code == 201
+
+    patient_id = create_response.json()["id"]
+
+    system = "https://medibridge.example.org/mrn"
+    mrn = f"TEST-COMBINED-MRN-{patient_id}"
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO patient_identifiers
+                        (patient_id, system, value)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (patient_id, system, mrn)
+                )
+            conn.commit()
+
+        # All three search filters match.
+        response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": "IdentifierTest",
+                "given": "CombinedSearch",
+                "identifier": f"{system}|{mrn}"
+            }
+        )
+
+        assert response.status_code == 200
+
+        result = response.json()
+
+        assert result["resourceType"] == "Bundle"
+        assert result["type"] == "searchset"
+        assert result["total"] == 1
+        assert len(result["entry"]) == 1
+
+        patient = result["entry"][0]["resource"]
+
+        assert patient["id"] == str(patient_id)
+        assert patient["name"][0]["family"] == "IdentifierTest"
+
+        # An incorrect family name must return no matches.
+        wrong_response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": "WrongFamily",
+                "given": "CombinedSearch",
+                "identifier": f"{system}|{mrn}"
+            }
+        )
+
+        assert wrong_response.status_code == 200
+        assert wrong_response.json()["total"] == 0
+        assert wrong_response.json()["entry"] == []
+
+    finally:
+        client.delete(f"/patients/{patient_id}")
+
+def test_fhir_metadata_advertises_identifier_search():
+    response = client.get("/fhir/metadata")
+
+    assert response.status_code == 200
+
+    metadata = response.json()
+
+    assert metadata["resourceType"] == "CapabilityStatement"
+    assert metadata["fhirVersion"] == "4.0.1"
+
+    patient_resource = next(
+        resource
+        for rest in metadata["rest"]
+        for resource in rest["resource"]
+        if resource["type"] == "Patient"
+    )
+
+    search_parameters = {
+        param["name"]: param
+        for param in patient_resource["searchParam"]
+    }
+
+    assert "family" in search_parameters
+    assert "given" in search_parameters
+    assert "identifier" in search_parameters
+
+    assert search_parameters["family"]["type"] == "string"
+    assert search_parameters["given"]["type"] == "string"
+    assert search_parameters["identifier"]["type"] == "token"

@@ -198,6 +198,7 @@ def update_patient(patient_id: int, patient: PatientCreate):
 
 
 
+
 @app.get("/fhir/metadata")
 def get_fhir_metadata():
     return {
@@ -236,12 +237,25 @@ def get_fhir_metadata():
                             {
                                 "name": "family",
                                 "type": "string",
-                                "documentation": "Search patients by family name."
+                                "documentation": (
+                                    "Search patients by family name."
+                                )
                             },
                             {
                                 "name": "given",
                                 "type": "string",
-                                "documentation": "Search patients by given name."
+                                "documentation": (
+                                    "Search patients by given name."
+                                )
+                            },
+                            {
+                                "name": "identifier",
+                                "type": "token",
+                                "documentation": (
+                                    "Search patients by identifier value "
+                                    "or by system and value using "
+                                    "system|value."
+                                )
                             }
                         ]
                     }
@@ -249,6 +263,7 @@ def get_fhir_metadata():
             }
         ]
     }
+
 
 
 
@@ -294,15 +309,17 @@ def get_fhir_patient(patient_id: int):
 
 
 
+
 @app.get("/fhir/Patient")
 def get_fhir_patients(
     request: Request,
     family: str | None = None,
     given: str | None = None,
+    identifier: str | None = None,
     count: int = Query(default=10, alias="_count", ge=1, le=100),
     offset: int = Query(default=0, alias="_offset", ge=0)
 ):
-    # Escape SQL LIKE wildcards and enable prefix matching.
+    # Escape SQL LIKE wildcards for prefix matching.
     def prefix_pattern(value: str) -> str:
         escaped = (
             value.replace("\\", "\\\\")
@@ -311,107 +328,84 @@ def get_fhir_patients(
         )
         return f"{escaped}%"
 
+    # Build search filters and their SQL parameters.
+    conditions = []
+    params = []
+
+    if family is not None:
+        conditions.append("p.last_name ILIKE %s")
+        params.append(prefix_pattern(family))
+
+    if given is not None:
+        conditions.append("p.first_name ILIKE %s")
+        params.append(prefix_pattern(given))
+
+    if identifier is not None:
+        if "|" in identifier:
+            system, value = identifier.split("|", 1)
+
+            conditions.append(
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM patient_identifiers pi
+                    WHERE pi.patient_id = p.id
+                      AND pi.system = %s
+                      AND pi.value = %s
+                )
+                """
+            )
+            params.extend([system, value])
+        else:
+            conditions.append(
+                """
+                EXISTS (
+                    SELECT 1
+                    FROM patient_identifiers pi
+                    WHERE pi.patient_id = p.id
+                      AND pi.value = %s
+                )
+                """
+            )
+            params.append(identifier)
+
+    where_clause = (
+        "WHERE " + " AND ".join(conditions)
+        if conditions
+        else ""
+    )
+
     with get_connection() as conn:
         with conn.cursor() as cursor:
-
-            if family is not None and given is not None:
-                cursor.execute(
-                    """
-                    SELECT id, first_name, last_name, date_of_birth, gender
-                    FROM patients
-                    WHERE last_name ILIKE %s
-                      AND first_name ILIKE %s
-                    ORDER BY id
-                    LIMIT %s OFFSET %s
-                    """,
-                    (
-                        prefix_pattern(family),
-                        prefix_pattern(given),
-                        count,
-                        offset
-                    )
-                )
-
-            elif family is not None:
-                cursor.execute(
-                    """
-                    SELECT id, first_name, last_name, date_of_birth, gender
-                    FROM patients
-                    WHERE last_name ILIKE %s
-                    ORDER BY id
-                    LIMIT %s OFFSET %s
-                    """,
-                    (prefix_pattern(family), count, offset)
-                )
-
-            elif given is not None:
-                cursor.execute(
-                    """
-                    SELECT id, first_name, last_name, date_of_birth, gender
-                    FROM patients
-                    WHERE first_name ILIKE %s
-                    ORDER BY id
-                    LIMIT %s OFFSET %s
-                    """,
-                    (prefix_pattern(given), count, offset)
-                )
-
-            else:
-                cursor.execute(
-                    """
-                    SELECT id, first_name, last_name, date_of_birth, gender
-                    FROM patients
-                    ORDER BY id
-                    LIMIT %s OFFSET %s
-                    """,
-                    (count, offset)
-                )
-
+            # Retrieve one page of matching patients.
+            cursor.execute(
+                f"""
+                SELECT
+                    p.id,
+                    p.first_name,
+                    p.last_name,
+                    p.date_of_birth,
+                    p.gender
+                FROM patients p
+                {where_clause}
+                ORDER BY p.id
+                LIMIT %s OFFSET %s
+                """,
+                (*params, count, offset)
+            )
             rows = cursor.fetchall()
 
-            # Count all matching patients before pagination.
-            if family is not None and given is not None:
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM patients
-                    WHERE last_name ILIKE %s
-                      AND first_name ILIKE %s
-                    """,
-                    (
-                        prefix_pattern(family),
-                        prefix_pattern(given)
-                    )
-                )
-
-            elif family is not None:
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM patients
-                    WHERE last_name ILIKE %s
-                    """,
-                    (prefix_pattern(family),)
-                )
-
-            elif given is not None:
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM patients
-                    WHERE first_name ILIKE %s
-                    """,
-                    (prefix_pattern(given),)
-                )
-
-            else:
-                cursor.execute(
-                    "SELECT COUNT(*) FROM patients"
-                )
-
+            # Count all matches before pagination.
+            cursor.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM patients p
+                {where_clause}
+                """,
+                tuple(params)
+            )
             total_matches = cursor.fetchone()[0]
 
-    # Convert database rows into Patient models.
     patients = [
         Patient(
             id=row[0],
@@ -422,23 +416,29 @@ def get_fhir_patients(
         )
         for row in rows
     ]
+
+    # Retrieve identifiers for the entire page in one query.
     identifiers_by_patient = get_identifiers_for_patients(
         [patient.id for patient in patients]
     )
-    # Build pagination URLs while preserving search filters.
+
+    # Build pagination links and preserve search filters.
     def page_url(page_offset: int) -> str:
-        params = {}
+        url_params = {}
 
         if family is not None:
-            params["family"] = family
+            url_params["family"] = family
 
         if given is not None:
-            params["given"] = given
+            url_params["given"] = given
 
-        params["_count"] = count
-        params["_offset"] = page_offset
+        if identifier is not None:
+            url_params["identifier"] = identifier
 
-        return f"{request.url.path}?{urlencode(params)}"
+        url_params["_count"] = count
+        url_params["_offset"] = page_offset
+
+        return f"{request.url.path}?{urlencode(url_params)}"
 
     links = [
         {
@@ -459,7 +459,6 @@ def get_fhir_patients(
             "url": page_url(max(0, offset - count))
         })
 
-    # Return a FHIR searchset Bundle.
     return {
         "resourceType": "Bundle",
         "type": "searchset",
@@ -474,8 +473,10 @@ def get_fhir_patients(
                     )
                 ),
                 "resource": patient_to_fhir(
-                 patient,
-                  identifiers=identifiers_by_patient.get(patient.id, [])
+                    patient,
+                    identifiers=identifiers_by_patient.get(
+                        patient.id, []
+                    )
                 )
             }
             for patient in patients
