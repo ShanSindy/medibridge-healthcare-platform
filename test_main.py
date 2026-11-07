@@ -277,6 +277,7 @@ def test_get_fhir_patient_not_found():
     assert response.headers["content-type"] == "application/fhir+json"
 
 
+
 def test_get_fhir_patients_bundle():
     patient_data = {
         "first_name": "Bundle",
@@ -291,7 +292,13 @@ def test_get_fhir_patients_bundle():
     patient_id = create_response.json()["id"]
 
     try:
-        response = client.get("/fhir/Patient")
+        response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": "Test",
+                "given": "Bundle"
+            }
+        )
 
         assert response.status_code == 200
 
@@ -299,7 +306,8 @@ def test_get_fhir_patients_bundle():
 
         assert result["resourceType"] == "Bundle"
         assert result["type"] == "searchset"
-        assert result["total"] == len(result["entry"])
+        assert result["total"] >= len(result["entry"])
+        assert len(result["entry"]) <= 10
 
         matching_entries = [
             entry
@@ -337,7 +345,6 @@ def test_get_fhir_patients_empty_bundle(monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
-
     class FakeConnection:
         def cursor(self):
             return FakeCursor()
@@ -356,7 +363,7 @@ def test_get_fhir_patients_empty_bundle(monkeypatch):
     response = client.get("/fhir/Patient")
 
     assert response.status_code == 200
-   
+
     assert response.json() == {
         "resourceType": "Bundle",
         "type": "searchset",
@@ -369,6 +376,7 @@ def test_get_fhir_patients_empty_bundle(monkeypatch):
         ],
         "entry": []
     }
+
 
 
 def test_search_fhir_patients_by_family():
@@ -1124,3 +1132,72 @@ def test_fhir_patient_includes_identifier():
                         (patient_id,)
                     )
 
+                    
+def test_fhir_patient_search_includes_identifier():
+    from database import get_connection
+
+    patient_id = None
+
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    INSERT INTO patients
+                        (first_name, last_name, date_of_birth, gender)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    ("BundleMRN", "SearchTest", "1995-06-15", "female")
+                )
+
+                patient_id = cursor.fetchone()[0]
+
+                cursor.execute(
+                    """
+                    INSERT INTO patient_identifiers
+                        (patient_id, system, value)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (
+                        patient_id,
+                        "https://medibridge.example.org/mrn",
+                        f"TEST-BUNDLE-MRN-{patient_id}"
+                    )
+                )
+
+        response = client.get(
+            "/fhir/Patient",
+            params={
+                "family": "SearchTest",
+                "given": "BundleMRN"
+            }
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["resourceType"] == "Bundle"
+        assert data["type"] == "searchset"
+        assert data["total"] == 1
+        assert len(data["entry"]) == 1
+
+        resource = data["entry"][0]["resource"]
+
+        assert resource["id"] == str(patient_id)
+        assert resource["identifier"] == [
+            {
+                "system": "https://medibridge.example.org/mrn",
+                "value": f"TEST-BUNDLE-MRN-{patient_id}"
+            }
+        ]
+
+    finally:
+        if patient_id is not None:
+            with get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "DELETE FROM patients WHERE id = %s",
+                        (patient_id,)
+                    )

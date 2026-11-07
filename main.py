@@ -1,5 +1,9 @@
 
-from database import get_connection, get_patient_identifiers
+from database import (
+    get_connection,
+    get_patient_identifiers,
+    get_identifiers_for_patients
+)
 from models import Patient, PatientCreate
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -418,7 +422,9 @@ def get_fhir_patients(
         )
         for row in rows
     ]
-
+    identifiers_by_patient = get_identifiers_for_patients(
+        [patient.id for patient in patients]
+    )
     # Build pagination URLs while preserving search filters.
     def page_url(page_offset: int) -> str:
         params = {}
@@ -467,7 +473,10 @@ def get_fhir_patients(
                         patient_id=patient.id
                     )
                 ),
-                "resource": patient_to_fhir(patient)
+                "resource": patient_to_fhir(
+                 patient,
+                  identifiers=identifiers_by_patient.get(patient.id, [])
+                )
             }
             for patient in patients
         ]
