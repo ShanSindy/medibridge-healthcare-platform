@@ -5,12 +5,13 @@ from database import (
     get_identifiers_for_patients
 )
 from models import Patient, PatientCreate
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Body
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fhir import patient_to_fhir, create_operation_outcome
 from urllib.parse import urlencode
+from hl7_service import register_patient_from_hl7
 
 app = FastAPI()
 
@@ -422,6 +423,7 @@ def get_fhir_patients(
         [patient.id for patient in patients]
     )
 
+
     # Build pagination links and preserve search filters.
     def page_url(page_offset: int) -> str:
         url_params = {}
@@ -482,3 +484,51 @@ def get_fhir_patients(
             for patient in patients
         ]
     }
+
+
+@app.post(
+    "/hl7/adt",
+    tags=["HL7 Integration"],
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "text/plain": {
+                    "schema": {
+                        "type": "string",
+                        "description": "Raw HL7 ADT^A04 message"
+                    }
+                }
+            }
+        }
+    }
+)
+async def receive_hl7_adt(request: Request):
+    """
+    Receive an HL7 ADT^A04 patient registration message.
+    """
+    content_type = request.headers.get(
+        "content-type", ""
+    ).split(";")[0].strip().lower()
+
+    if content_type != "text/plain":
+        raise HTTPException(
+            status_code=415,
+            detail="Content-Type must be text/plain."
+        )
+
+    raw_message = (await request.body()).decode(
+        "utf-8",
+        errors="replace"
+    )
+
+    try:
+        result = register_patient_from_hl7(raw_message)
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc)
+        ) from exc
+
+    return result
