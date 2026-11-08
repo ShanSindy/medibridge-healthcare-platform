@@ -163,3 +163,30 @@ def test_parse_hl7_adt_a08():
     assert "EVN" in segments
     assert "PID" in segments
     assert segments["MSH"][0][8] == "ADT^A08"
+def test_parse_hl7_message_missing_control_id():
+    message = (
+        "MSH|^~\\&|SendingApp|SendingFacility|"
+        "ReceivingApp|ReceivingFacility|202611081200||"
+        "ADT^A04||P|2.5\n"
+        "PID|1||MRN-TEST-001||Doe^Jane||19900101|F"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="message control ID"
+    ):
+        parse_hl7_message(message)
+
+def test_parse_hl7_message_whitespace_control_id():
+    message = (
+        "MSH|^~\\&|SendingApp|SendingFacility|"
+        "ReceivingApp|ReceivingFacility|202611081200||"
+        "ADT^A04|   |P|2.5\n"
+        "PID|1||MRN-TEST-002||Smith^John||19920510|M"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="message control ID"
+    ):
+        parse_hl7_message(message)
