@@ -34,23 +34,24 @@ def parse_hl7_message(message: str) -> dict:
     msh_fields = segments["MSH"][0]
 
     if len(msh_fields) <= 8:
-        raise ValueError("HL7 MSH segment is missing the message type.")
+        raise ValueError(
+            "HL7 MSH segment is missing the message type."
+        )
 
+    if len(msh_fields) <= 9 or not msh_fields[9].strip():
+        raise ValueError(
+            "HL7 MSH segment must contain a message control ID."
+        )
 
     message_type = msh_fields[8]
-
     supported_message_types = {"ADT^A04", "ADT^A08"}
 
     if message_type not in supported_message_types:
         raise ValueError(
-    "Unsupported HL7 message type. Expected ADT^A04 or ADT^A08."
-    )
-
+            "Unsupported HL7 message type. Expected ADT^A04 or ADT^A08."
+        )
 
     return segments
-
-
-from datetime import datetime
 
 
 
