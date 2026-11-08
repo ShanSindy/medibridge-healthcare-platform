@@ -36,12 +36,16 @@ def parse_hl7_message(message: str) -> dict:
     if len(msh_fields) <= 8:
         raise ValueError("HL7 MSH segment is missing the message type.")
 
+
     message_type = msh_fields[8]
 
-    if message_type != "ADT^A04":
+    supported_message_types = {"ADT^A04", "ADT^A08"}
+
+    if message_type not in supported_message_types:
         raise ValueError(
-            "Unsupported HL7 message type. Expected ADT^A04."
-        )
+    "Unsupported HL7 message type. Expected ADT^A04 or ADT^A08."
+    )
+
 
     return segments
 

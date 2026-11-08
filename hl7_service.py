@@ -1,6 +1,9 @@
 
 from database import get_connection
-from hl7_parser import process_hl7_adt_message
+from hl7_parser import (
+    parse_hl7_message,
+    process_hl7_adt_message,
+)
 
 
 HL7_MRN_SYSTEM = "https://medibridge.example.org/mrn"
@@ -12,7 +15,18 @@ def register_patient_from_hl7(message: str) -> dict:
 
     The patient and MRN are inserted in one transaction.
     """
+
+
+    segments = parse_hl7_message(message)
+
+    if segments["MSH"][0][8] != "ADT^A04":
+        raise ValueError(
+            "Patient registration requires an ADT^A04 message."
+        )
+
     patient = process_hl7_adt_message(message)
+
+
 
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -66,6 +80,63 @@ def register_patient_from_hl7(message: str) -> dict:
 
     return {
         "status": "created",
+        "patient_id": patient_id,
+        "mrn": patient["mrn"]
+    }
+
+
+def update_patient_from_hl7(message: str) -> dict:
+    """
+    Update an existing patient from an HL7 ADT^A08 message.
+
+    Locate the patient by MRN and update their demographics.
+    """
+    segments = parse_hl7_message(message)
+
+    if segments["MSH"][0][8] != "ADT^A08":
+        raise ValueError(
+            "Patient updates require an ADT^A08 message."
+        )
+
+    patient = process_hl7_adt_message(message)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE patients AS p
+                SET
+                    first_name = %s,
+                    last_name = %s,
+                    date_of_birth = %s,
+                    gender = %s
+                FROM patient_identifiers AS pi
+                WHERE pi.patient_id = p.id
+                  AND pi.system = %s
+                  AND pi.value = %s
+                RETURNING p.id
+                """,
+                (
+                    patient["first_name"],
+                    patient["last_name"],
+                    patient["date_of_birth"],
+                    patient["gender"],
+                    HL7_MRN_SYSTEM,
+                    patient["mrn"]
+                )
+            )
+
+            updated = cur.fetchone()
+
+            if updated is None:
+                raise ValueError(
+                    "Cannot update patient: MRN not found."
+                )
+
+            patient_id = updated[0]
+
+    return {
+        "status": "updated",
         "patient_id": patient_id,
         "mrn": patient["mrn"]
     }

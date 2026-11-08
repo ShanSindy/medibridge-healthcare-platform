@@ -113,17 +113,21 @@ def test_extract_patient_invalid_dob(invalid_dob):
     ):
         extract_patient_from_pid(segments)
 
+
 def test_parse_unsupported_hl7_message_type():
     message = (
         "MSH|^~\\&|REGISTRATION|HOSPITAL|MEDIBRIDGE|HOSPITAL|"
-        "20261107120000||ADT^A08|MSG00005|P|2.5\r"
+        "20261107120000||ADT^A01|MSG00005|P|2.5\r"
         "PID|1||MRN-000008^^^HOSPITAL^MR||Morgan^Alex||19920415|M"
     )
 
     with pytest.raises(
         ValueError,
-        match="Unsupported HL7 message type"
+        match=r"Unsupported HL7 message type\. Expected ADT\^A04 or ADT\^A08\."
     ):
+        parse_hl7_message(message)
+
+
         parse_hl7_message(message)
 
 def test_process_hl7_adt_message():
@@ -143,3 +147,19 @@ def test_process_hl7_adt_message():
         "date_of_birth": "1995-07-22",
         "gender": "female"
     }
+
+def test_parse_hl7_adt_a08():
+    message = (
+        "MSH|^~\\&|REGISTRATION|HOSPITAL|MEDIBRIDGE|HOSPITAL|"
+        "20261108120000||ADT^A08|MSG00021|P|2.5\r"
+        "EVN|A08|20261108120000\r"
+        "PID|1||MRN-000020^^^HOSPITAL^MR||"
+        "Taylor^Jordan||19950722|F"
+    )
+
+    segments = parse_hl7_message(message)
+
+    assert "MSH" in segments
+    assert "EVN" in segments
+    assert "PID" in segments
+    assert segments["MSH"][0][8] == "ADT^A08"

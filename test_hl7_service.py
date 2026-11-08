@@ -1,7 +1,7 @@
 
 from uuid import uuid4
 from database import get_connection
-from hl7_service import register_patient_from_hl7
+from hl7_service import register_patient_from_hl7, update_patient_from_hl7, HL7_MRN_SYSTEM
 import pytest
 from unittest.mock import patch
 
@@ -150,3 +150,154 @@ def test_register_patient_from_hl7_transaction_rollback():
 
     assert identifier_count == 0
     assert patient_count == 0
+
+
+def test_register_patient_rejects_a08():
+    message = (
+        "MSH|^~\\&|REGISTRATION|HOSPITAL|MEDIBRIDGE|HOSPITAL|"
+        "20261108120000||ADT^A08|MSG00022|P|2.5\r"
+        "EVN|A08|20261108120000\r"
+        "PID|1||MRN-000022^^^HOSPITAL^MR||"
+        "Taylor^Jordan||19950722|F"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Patient registration requires an ADT\^A04 message\."
+    ):
+        register_patient_from_hl7(message)
+
+def test_update_patient_from_hl7():
+    mrn = "MRN-A08-TEST-001"
+    patient_id = None
+
+    try:
+        # Create a synthetic patient in the test database.
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO patients
+                        (first_name, last_name, date_of_birth, gender)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    ("Jordan", "Taylor", "1995-07-22", "female")
+                )
+                patient_id = cur.fetchone()[0]
+
+                cur.execute(
+                    """
+                    INSERT INTO patient_identifiers
+                        (patient_id, system, value)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (patient_id, HL7_MRN_SYSTEM, mrn)
+                )
+
+        # Send an A08 message with updated demographics.
+        message = (
+            "MSH|^~\\&|REGISTRATION|HOSPITAL|MEDIBRIDGE|HOSPITAL|"
+            "20261108120000||ADT^A08|MSG00023|P|2.5\r"
+            "EVN|A08|20261108120000\r"
+            "PID|1||MRN-A08-TEST-001^^^HOSPITAL^MR||"
+            "Taylor^Jordan||19950722|M"
+        )
+
+        result = update_patient_from_hl7(message)
+
+        assert result["status"] == "updated"
+        assert result["patient_id"] == patient_id
+        assert result["mrn"] == mrn
+
+        # Verify the existing database record was updated.
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT first_name, last_name, gender
+                    FROM patients
+                    WHERE id = %s
+                    """,
+                    (patient_id,)
+                )
+                updated_patient = cur.fetchone()
+
+                cur.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM patient_identifiers
+                    WHERE system = %s AND value = %s
+                    """,
+                    (HL7_MRN_SYSTEM, mrn)
+                )
+                identifier_count = cur.fetchone()[0]
+
+        assert updated_patient == ("Jordan", "Taylor", "male")
+        assert identifier_count == 1
+
+    finally:
+        # Remove only the patient created by this test.
+        if patient_id is not None:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM patients WHERE id = %s",
+                        (patient_id,)
+                    )
+
+def test_update_patient_from_hl7_unknown_mrn():
+    mrn = "MRN-A08-UNKNOWN-999"
+
+    message = (
+        "MSH|^~\\&|REGISTRATION|HOSPITAL|MEDIBRIDGE|HOSPITAL|"
+        "20261108130000||ADT^A08|MSG00024|P|2.5\r"
+        "EVN|A08|20261108130000\r"
+        "PID|1||MRN-A08-UNKNOWN-999^^^HOSPITAL^MR||"
+        "Taylor^Jordan||19950722|F"
+    )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM patient_identifiers
+                WHERE system = %s AND value = %s
+                """,
+                (HL7_MRN_SYSTEM, mrn)
+            )
+            assert cur.fetchone()[0] == 0
+
+    with pytest.raises(
+        ValueError,
+        match="Cannot update patient: MRN not found."
+    ):
+        update_patient_from_hl7(message)
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM patient_identifiers
+                WHERE system = %s AND value = %s
+                """,
+                (HL7_MRN_SYSTEM, mrn)
+            )
+            assert cur.fetchone()[0] == 0
+
+def test_update_patient_rejects_a04():
+    message = (
+        "MSH|^~\\&|REGISTRATION|HOSPITAL|MEDIBRIDGE|HOSPITAL|"
+        "20261108140000||ADT^A04|MSG00025|P|2.5\r"
+        "EVN|A04|20261108140000\r"
+        "PID|1||MRN-A04-TEST-025^^^HOSPITAL^MR||"
+        "Taylor^Jordan||19950722|F"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Patient updates require an ADT\^A08 message\."
+    ):
+        update_patient_from_hl7(message)
