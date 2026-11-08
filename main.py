@@ -11,7 +11,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fhir import patient_to_fhir, create_operation_outcome
 from urllib.parse import urlencode
-from hl7_service import register_patient_from_hl7
+from hl7_service import (
+    register_patient_from_hl7,
+    update_patient_from_hl7,
+)
+from hl7_parser import parse_hl7_message
+
 
 app = FastAPI()
 
@@ -503,10 +508,8 @@ def get_fhir_patients(
         }
     }
 )
+
 async def receive_hl7_adt(request: Request):
-    """
-    Receive an HL7 ADT^A04 patient registration message.
-    """
     content_type = request.headers.get(
         "content-type", ""
     ).split(";")[0].strip().lower()
@@ -517,13 +520,24 @@ async def receive_hl7_adt(request: Request):
             detail="Content-Type must be text/plain."
         )
 
-    raw_message = (await request.body()).decode(
-        "utf-8",
-        errors="replace"
-    )
+    raw_message = (
+        await request.body()
+    ).decode("utf-8", errors="replace")
 
     try:
-        result = register_patient_from_hl7(raw_message)
+        segments = parse_hl7_message(raw_message)
+        message_type = segments["MSH"][0][8]
+
+        if message_type == "ADT^A04":
+            result = register_patient_from_hl7(raw_message)
+
+        elif message_type == "ADT^A08":
+            result = update_patient_from_hl7(raw_message)
+
+        else:
+            raise ValueError(
+                "Unsupported HL7 message type."
+            )
 
     except ValueError as exc:
         raise HTTPException(
