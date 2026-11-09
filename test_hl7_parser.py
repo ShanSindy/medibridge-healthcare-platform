@@ -1,8 +1,9 @@
 
 from hl7_parser import (
     parse_hl7_message,
+    extract_hl7_message_metadata,
     extract_patient_from_pid,
-    process_hl7_adt_message
+    process_hl7_adt_message,
 )
 import pytest
 
@@ -190,3 +191,49 @@ def test_parse_hl7_message_whitespace_control_id():
         match="message control ID"
     ):
         parse_hl7_message(message)
+
+
+def test_extract_hl7_message_metadata():
+    message = (
+        "MSH|^~\\&|HOSPITAL_APP|GENERAL_HOSPITAL|"
+        "MEDIBRIDGE|HOSPITAL|20261109100000||"
+        "ADT^A04|MSG00001|P|2.5\n"
+        "PID|1||MRN-TEST-001||Doe^Jane||19900101|F"
+    )
+
+    segments = parse_hl7_message(message)
+    metadata = extract_hl7_message_metadata(segments)
+
+    assert metadata == {
+        "sending_application": "HOSPITAL_APP",
+        "sending_facility": "GENERAL_HOSPITAL",
+        "message_control_id": "MSG00001",
+        "message_type": "ADT^A04",
+    }
+
+@pytest.mark.parametrize(
+    "sending_application,sending_facility",
+    [
+        ("", "GENERAL_HOSPITAL"),
+        ("HOSPITAL_APP", ""),
+        ("", ""),
+    ],
+)
+def test_extract_hl7_message_metadata_missing_sender(
+    sending_application,
+    sending_facility,
+):
+    message = (
+        f"MSH|^~\\&|{sending_application}|{sending_facility}|"
+        "MEDIBRIDGE|HOSPITAL|20261109100000||"
+        "ADT^A04|MSG00002|P|2.5\n"
+        "PID|1||MRN-TEST-002||Smith^John||19920510|M"
+    )
+
+    segments = parse_hl7_message(message)
+
+    with pytest.raises(
+        ValueError,
+        match="sending application and facility",
+    ):
+        extract_hl7_message_metadata(segments)
