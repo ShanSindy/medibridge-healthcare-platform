@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 def parse_hl7_message(message: str) -> dict:
@@ -11,6 +12,7 @@ def parse_hl7_message(message: str) -> dict:
     if not message or not message.strip():
         raise ValueError("HL7 message cannot be empty.")
 
+
     segments = {}
 
     for line in message.strip().splitlines():
@@ -22,16 +24,38 @@ def parse_hl7_message(message: str) -> dict:
         fields = line.split("|")
         segment_name = fields[0]
 
+        if not segments and segment_name != "MSH":
+            raise ValueError(
+                "HL7 message must begin with an MSH segment."
+            )
+
+
+
         if not segment_name:
             raise ValueError("HL7 segment name cannot be empty.")
+
+        if not re.fullmatch(r"[A-Z][A-Z0-9]{2}", segment_name):
+            raise ValueError(
+                f"Invalid HL7 segment name: {segment_name}"
+            )
 
         segments.setdefault(segment_name, []).append(fields)
 
 
+
+
     if "MSH" not in segments:
-        raise ValueError("HL7 message must contain an MSH segment.")
+        raise ValueError(
+            "HL7 message must contain an MSH segment."
+        )
+
+    if len(segments["MSH"]) != 1:
+        raise ValueError(
+            "HL7 message must contain exactly one MSH segment."
+        )
 
     msh_fields = segments["MSH"][0]
+
 
     if len(msh_fields) <= 8:
         raise ValueError(
