@@ -6,7 +6,7 @@ from database import (
 )
 from models import Patient, PatientCreate
 from fastapi import FastAPI, HTTPException, Query, Request, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from fhir import patient_to_fhir, create_operation_outcome
@@ -16,6 +16,7 @@ from hl7_service import (
     update_patient_from_hl7,
 )
 from hl7_parser import parse_hl7_message
+from hl7_ack import generate_hl7_ack
 
 
 app = FastAPI()
@@ -509,6 +510,7 @@ def get_fhir_patients(
     }
 )
 
+
 async def receive_hl7_adt(request: Request):
     content_type = request.headers.get(
         "content-type", ""
@@ -523,6 +525,11 @@ async def receive_hl7_adt(request: Request):
     raw_message = (
         await request.body()
     ).decode("utf-8", errors="replace")
+
+    wants_hl7_ack = (
+        "application/hl7-v2"
+        in request.headers.get("accept", "").lower()
+    )
 
     try:
         segments = parse_hl7_message(raw_message)
@@ -540,9 +547,46 @@ async def receive_hl7_adt(request: Request):
             )
 
     except ValueError as exc:
+        if wants_hl7_ack and "segments" in locals():
+            ack = generate_hl7_ack(
+                segments,
+                acknowledgment_code="AR",
+                error_message=str(exc)
+            )
+            return Response(
+                content=ack,
+                media_type="application/hl7-v2",
+                status_code=400
+            )
+
         raise HTTPException(
             status_code=400,
             detail=str(exc)
         ) from exc
+
+    except Exception:
+        if wants_hl7_ack and "segments" in locals():
+            ack = generate_hl7_ack(
+                segments,
+                acknowledgment_code="AE",
+                error_message="Internal application processing error"
+            )
+            return Response(
+                content=ack,
+                media_type="application/hl7-v2",
+                status_code=500
+            )
+
+        raise
+
+    if wants_hl7_ack:
+        ack = generate_hl7_ack(
+            segments,
+            acknowledgment_code="AA"
+        )
+        return Response(
+            content=ack,
+            media_type="application/hl7-v2"
+        )
 
     return result
