@@ -54,6 +54,42 @@ def parse_hl7_message(message: str) -> dict:
     return segments
 
 
+def extract_hl7_message_metadata(segments: dict) -> dict:
+    """
+    Extract message identification information from MSH.
+
+    The sending application, sending facility, and message
+    control ID will be used for duplicate detection.
+    """
+    if "MSH" not in segments or not segments["MSH"]:
+        raise ValueError("HL7 message must contain an MSH segment.")
+
+    msh_fields = segments["MSH"][0]
+
+    if len(msh_fields) <= 9:
+        raise ValueError("HL7 MSH segment is missing required metadata.")
+
+    sending_application = msh_fields[2].strip()
+    sending_facility = msh_fields[3].strip()
+    message_type = msh_fields[8].strip()
+    message_control_id = msh_fields[9].strip()
+
+    if not sending_application or not sending_facility:
+        raise ValueError(
+            "HL7 message must identify its sending application and facility."
+        )
+
+    if not message_control_id:
+        raise ValueError("HL7 message control ID cannot be empty.")
+
+    return {
+        "sending_application": sending_application,
+        "sending_facility": sending_facility,
+        "message_control_id": message_control_id,
+        "message_type": message_type,
+    }
+
+
 
 def extract_patient_from_pid(segments: dict) -> dict:
     """

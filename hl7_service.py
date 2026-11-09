@@ -3,20 +3,22 @@ from database import get_connection
 from hl7_parser import (
     parse_hl7_message,
     process_hl7_adt_message,
+    extract_hl7_message_metadata,
 )
+from hl7_tracking import record_hl7_message
 
 
 HL7_MRN_SYSTEM = "https://medibridge.example.org/mrn"
 
 
+
 def register_patient_from_hl7(message: str) -> dict:
     """
-    Register a patient from a validated HL7 ADT^A04 message.
+    Register a patient from an HL7 ADT^A04 message.
 
-    The patient and MRN are inserted in one transaction.
+    Patient creation, MRN insertion, and message tracking
+    occur in one database transaction.
     """
-
-
     segments = parse_hl7_message(message)
 
     if segments["MSH"][0][8] != "ADT^A04":
@@ -25,11 +27,21 @@ def register_patient_from_hl7(message: str) -> dict:
         )
 
     patient = process_hl7_adt_message(message)
-
-
+    metadata = extract_hl7_message_metadata(segments)
 
     with get_connection() as conn:
         with conn.cursor() as cur:
+            is_new_message = record_hl7_message(
+                cur, metadata
+            )
+
+            if not is_new_message:
+                return {
+                    "status": "duplicate",
+                    "mrn": patient["mrn"],
+                    "message_control_id": metadata["message_control_id"]
+                }
+
             cur.execute(
                 """
                 SELECT patient_id
@@ -85,11 +97,13 @@ def register_patient_from_hl7(message: str) -> dict:
     }
 
 
+
 def update_patient_from_hl7(message: str) -> dict:
     """
     Update an existing patient from an HL7 ADT^A08 message.
 
-    Locate the patient by MRN and update their demographics.
+    Message tracking and patient updates occur in
+    the same PostgreSQL transaction.
     """
     segments = parse_hl7_message(message)
 
@@ -99,9 +113,23 @@ def update_patient_from_hl7(message: str) -> dict:
         )
 
     patient = process_hl7_adt_message(message)
+    metadata = extract_hl7_message_metadata(segments)
 
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # Record the message before modifying patient data.
+            is_new_message = record_hl7_message(
+                cur, metadata
+            )
+
+            if not is_new_message:
+                return {
+                    "status": "duplicate",
+                    "mrn": patient["mrn"],
+                    "message_control_id": metadata["message_control_id"]
+                }
+
+            # Update the patient identified by the MRN.
             cur.execute(
                 """
                 UPDATE patients AS p
