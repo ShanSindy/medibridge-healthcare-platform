@@ -237,3 +237,69 @@ def test_extract_hl7_message_metadata_missing_sender(
         match="sending application and facility",
     ):
         extract_hl7_message_metadata(segments)
+
+def test_parse_hl7_message_rejects_duplicate_msh():
+    import pytest
+    from hl7_parser import parse_hl7_message
+
+    message = (
+        "MSH|^~\\&|HOSPITAL_APP|GENERAL_HOSPITAL|"
+        "MediBridge|Integration|20261109110000||"
+        "ADT^A04|MSG10001|P|2.5\r"
+        "MSH|^~\\&|HOSPITAL_APP|GENERAL_HOSPITAL|"
+        "MediBridge|Integration|20261109110100||"
+        "ADT^A04|MSG10002|P|2.5\r"
+        "PID|1||MRN-10001||Doe^Jane||19900101|F\r"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="HL7 message must contain exactly one MSH segment"
+    ):
+        parse_hl7_message(message)
+
+def test_parse_hl7_message_requires_msh_first():
+    import pytest
+    from hl7_parser import parse_hl7_message
+
+    message = (
+        "PID|1||MRN-10001||Doe^Jane||19900101|F\r"
+        "MSH|^~\\&|HOSPITAL_APP|GENERAL_HOSPITAL|"
+        "MediBridge|Integration|20261109110000||"
+        "ADT^A04|MSG10001|P|2.5\r"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="HL7 message must begin with an MSH segment"
+    ):
+        parse_hl7_message(message)
+
+import pytest
+
+@pytest.mark.parametrize(
+    "invalid_segment",
+    [
+        "PATIENT",
+        "P1",
+        "PID!",
+        "pid",
+    ]
+)
+def test_parse_hl7_message_rejects_invalid_segment_names(
+    invalid_segment
+):
+    from hl7_parser import parse_hl7_message
+
+    message = (
+        "MSH|^~\\&|HOSPITAL_APP|GENERAL_HOSPITAL|"
+        "MediBridge|Integration|20261109110000||"
+        "ADT^A04|MSG10001|P|2.5\r"
+        f"{invalid_segment}|1||MRN-10001||Doe^Jane||19900101|F\r"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid HL7 segment name"
+    ):
+        parse_hl7_message(message)
