@@ -17,6 +17,14 @@ from hl7_service import (
 )
 from hl7_parser import parse_hl7_message
 from hl7_ack import generate_hl7_ack
+from models import Provider, ProviderCreate
+from provider_service import (
+    create_provider,
+    get_all_providers,
+    get_provider_by_id,
+    update_provider,
+    delete_provider,
+)
 
 
 app = FastAPI()
@@ -590,3 +598,87 @@ async def receive_hl7_adt(request: Request):
         )
 
     return result
+
+@app.post(
+    "/providers",
+    response_model=Provider,
+    status_code=201,
+    tags=["Providers"],
+)
+def create_provider_endpoint(provider: ProviderCreate):
+    """
+    Create a new healthcare provider.
+    """
+    return create_provider(provider)
+
+
+@app.get(
+    "/providers",
+    response_model=list[Provider],
+    tags=["Providers"],
+)
+def list_providers_endpoint():
+    """
+    Retrieve all healthcare providers.
+    """
+    return get_all_providers()
+
+@app.get(
+    "/providers/{provider_id}",
+    response_model=Provider,
+    tags=["Providers"],
+)
+def get_provider_endpoint(provider_id: int):
+    """
+    Retrieve a healthcare provider by ID.
+    """
+    provider = get_provider_by_id(provider_id)
+
+    if provider is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Provider not found",
+        )
+
+    return provider
+
+@app.put(
+    "/providers/{provider_id}",
+    response_model=Provider,
+    tags=["Providers"],
+)
+def update_provider_endpoint(
+    provider_id: int,
+    provider: ProviderCreate,
+):
+    """
+    Update an existing healthcare provider.
+    """
+    updated_provider = update_provider(provider_id, provider)
+
+    if updated_provider is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Provider not found",
+        )
+
+    return updated_provider
+
+@app.delete(
+    "/providers/{provider_id}",
+    status_code=204,
+    tags=["Providers"],
+)
+def delete_provider_endpoint(provider_id: int):
+    """
+    Delete a healthcare provider by ID.
+    """
+    deleted = delete_provider(provider_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Provider not found",
+        )
+
+    return None
