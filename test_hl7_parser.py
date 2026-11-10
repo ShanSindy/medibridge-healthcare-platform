@@ -47,6 +47,7 @@ def test_extract_patient_from_pid():
     assert patient["date_of_birth"] == "1992-04-15"
     assert patient["gender"] == "male"
 
+
 def test_extract_patient_missing_pid():
     message = (
         "MSH|^~\\&|REGISTRATION|HOSPITAL|MEDIBRIDGE|HOSPITAL|"
@@ -54,13 +55,12 @@ def test_extract_patient_missing_pid():
         "EVN|A04|20261107120000"
     )
 
-    segments = parse_hl7_message(message)
-
     with pytest.raises(
         ValueError,
         match="HL7 message must contain a PID segment"
     ):
-        extract_patient_from_pid(segments)
+        parse_hl7_message(message)
+
 
 def test_extract_patient_missing_mrn():
     message = (
@@ -301,5 +301,42 @@ def test_parse_hl7_message_rejects_invalid_segment_names(
     with pytest.raises(
         ValueError,
         match="Invalid HL7 segment name"
+    ):
+        parse_hl7_message(message)
+
+def test_parse_hl7_message_rejects_duplicate_pid():
+    import pytest
+    from hl7_parser import parse_hl7_message
+
+    message = (
+        "MSH|^~\\&|HOSPITAL_APP|GENERAL_HOSPITAL|"
+        "MediBridge|Integration|20261109120000||"
+        "ADT^A04|MSG20001|P|2.5\r"
+        "PID|1||MRN-20001||Doe^Jane||19900101|F\r"
+        "PID|2||MRN-20002||Smith^John||19850515|M\r"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="HL7 message must contain exactly one PID segment"
+    ):
+        parse_hl7_message(message)
+
+@pytest.mark.parametrize(
+    "message_type",
+    ["ADT^A04", "ADT^A08"]
+)
+def test_parse_hl7_message_requires_pid(message_type):
+    from hl7_parser import parse_hl7_message
+
+    message = (
+        "MSH|^~\\&|HOSPITAL_APP|GENERAL_HOSPITAL|"
+        "MediBridge|Integration|20261110150000||"
+        f"{message_type}|MSG30001|P|2.5\r"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="HL7 message must contain a PID segment"
     ):
         parse_hl7_message(message)

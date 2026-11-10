@@ -42,8 +42,6 @@ def parse_hl7_message(message: str) -> dict:
         segments.setdefault(segment_name, []).append(fields)
 
 
-
-
     if "MSH" not in segments:
         raise ValueError(
             "HL7 message must contain an MSH segment."
@@ -54,7 +52,20 @@ def parse_hl7_message(message: str) -> dict:
             "HL7 message must contain exactly one MSH segment."
         )
 
+
+    if "PID" not in segments:
+        raise ValueError(
+            "HL7 message must contain a PID segment."
+        )
+
+    if len(segments["PID"]) != 1:
+        raise ValueError(
+            "HL7 message must contain exactly one PID segment."
+        )
+
+
     msh_fields = segments["MSH"][0]
+
 
 
     if len(msh_fields) <= 8:
