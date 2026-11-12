@@ -17,7 +17,7 @@ from hl7_service import (
 )
 from hl7_parser import parse_hl7_message
 from hl7_ack import generate_hl7_ack
-from models import Provider, ProviderCreate
+from models import Provider, ProviderCreate, Appointment, AppointmentCreate, AppointmentUpdate
 from provider_service import (
     create_provider,
     get_all_providers,
@@ -25,6 +25,20 @@ from provider_service import (
     update_provider,
     delete_provider,
 )
+from appointment_service import (
+    create_appointment,
+    get_all_appointments,
+    get_appointment_by_id,
+    update_appointment,
+    cancel_appointment,
+)
+from typing import Literal
+from psycopg.errors import ExclusionViolation
+
+
+
+
+
 
 
 app = FastAPI()
@@ -682,3 +696,147 @@ def delete_provider_endpoint(provider_id: int):
         )
 
     return None
+
+
+
+@app.post(
+    "/appointments",
+    response_model=Appointment,
+    status_code=201,
+    tags=["Appointments"],
+    responses={
+        409: {
+            "description": "Provider scheduling conflict",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": (
+                            "This provider already has a scheduled "
+                            "appointment during the requested time."
+                        )
+                    }
+                }
+            },
+        }
+    },
+)
+
+def create_appointment_endpoint(appointment: AppointmentCreate):
+    try:
+        return create_appointment(appointment)
+
+    except ExclusionViolation as exc:
+        if exc.diag.constraint_name != "appointments_no_provider_overlap":
+            raise
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This provider already has a scheduled "
+                "appointment during the requested time."
+            ),
+        ) from exc
+
+
+
+@app.get(
+    "/appointments",
+    response_model=list[Appointment],
+    tags=["Appointments"],
+)
+def list_appointments_endpoint(
+    patient_id: int | None = None,
+    provider_id: int | None = None,
+    status: Literal["scheduled", "completed", "cancelled"] | None = None,
+):
+    return get_all_appointments(
+        patient_id=patient_id,
+        provider_id=provider_id,
+        status=status,
+    )
+
+@app.get(
+    "/appointments/{appointment_id}",
+    response_model=Appointment,
+    tags=["Appointments"],
+)
+def get_appointment_endpoint(appointment_id: int):
+    appointment = get_appointment_by_id(appointment_id)
+
+    if appointment is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Appointment not found",
+        )
+
+    return appointment
+
+
+
+@app.put(
+    "/appointments/{appointment_id}",
+    response_model=Appointment,
+    tags=["Appointments"],
+    responses={
+        409: {
+            "description": "Provider scheduling conflict",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": (
+                            "This provider already has a scheduled "
+                            "appointment during the requested time."
+                        )
+                    }
+                }
+            },
+        }
+    },
+)
+
+def update_appointment_endpoint(
+    appointment_id: int,
+    appointment: AppointmentUpdate,
+):
+    try:
+        updated_appointment = update_appointment(
+            appointment_id,
+            appointment,
+        )
+
+    except ExclusionViolation as exc:
+        if exc.diag.constraint_name != "appointments_no_provider_overlap":
+            raise
+
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This provider already has a scheduled "
+                "appointment during the requested time."
+            ),
+        ) from exc
+
+    if updated_appointment is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Appointment not found",
+        )
+
+    return updated_appointment
+
+
+@app.patch(
+    "/appointments/{appointment_id}/cancel",
+    response_model=Appointment,
+    tags=["Appointments"],
+)
+def cancel_appointment_endpoint(appointment_id: int):
+    cancelled_appointment = cancel_appointment(appointment_id)
+
+    if cancelled_appointment is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Appointment not found",
+        )
+
+    return cancelled_appointment
