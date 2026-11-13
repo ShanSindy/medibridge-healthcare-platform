@@ -72,6 +72,8 @@ from token_service import (
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 
+from audit import log_audit_event
+from audit_service import get_audit_logs
 
 
 
@@ -115,7 +117,32 @@ def health_check():
     }
 
 
-@app.get("/patients", response_model=list[Patient])
+@app.get("/audit-logs")
+def list_audit_logs(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(
+        require_permission("audit:read")
+    ),
+):
+    """Retrieve audit history for authorized administrators."""
+
+    return {
+        "limit": limit,
+        "offset": offset,
+        "items": get_audit_logs(
+            limit=limit,
+            offset=offset,
+        ),
+    }
+
+
+
+@app.get(
+    "/patients",
+    response_model=list[Patient],
+    dependencies=[Depends(require_permission("patients:read"))],
+)
 def get_patients():
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -141,7 +168,11 @@ def get_patients():
     ]
 
 
-@app.get("/patients/{patient_id}", response_model=Patient)
+@app.get(
+    "/patients/{patient_id}",
+    response_model=Patient,
+    dependencies=[Depends(require_permission("patients:read"))],
+)
 def get_patient(patient_id: int):
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -171,8 +202,17 @@ def get_patient(patient_id: int):
     }
 
 
-@app.post("/patients", response_model=Patient, status_code=201)
-def create_patient(patient: PatientCreate):
+@app.post(
+    "/patients",
+    response_model=Patient,
+    status_code=201,
+    dependencies=[Depends(require_permission("patients:write"))],
+)
+
+def create_patient(
+    patient: PatientCreate,
+    current_user: dict = Depends(get_current_user),
+):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -190,27 +230,46 @@ def create_patient(patient: PatientCreate):
                     patient.first_name,
                     patient.last_name,
                     patient.date_of_birth,
-                    patient.gender
-                )
+                    patient.gender,
+                ),
             )
 
             row = cursor.fetchone()
+
+        log_audit_event(
+            action="patient.create",
+            resource_type="patient",
+            resource_id=str(row[0]),
+            outcome="success",
+            user_id=current_user["id"],
+            details={"source": "api"},
+            connection=conn,
+        )
 
     return {
         "id": row[0],
         "first_name": row[1],
         "last_name": row[2],
         "date_of_birth": row[3],
-        "gender": row[4]
+        "gender": row[4],
     }
 
-@app.delete("/patients/{patient_id}", status_code=204)
-def delete_patient(patient_id: int):
+
+@app.delete(
+    "/patients/{patient_id}",
+    status_code=204,
+    dependencies=[Depends(require_permission("patients:write"))],
+)
+
+def delete_patient(
+    patient_id: int,
+    current_user: dict = Depends(get_current_user),
+):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 "DELETE FROM patients WHERE id = %s RETURNING id",
-                (patient_id,)
+                (patient_id,),
             )
 
             deleted_patient = cursor.fetchone()
@@ -218,11 +277,30 @@ def delete_patient(patient_id: int):
             if deleted_patient is None:
                 raise HTTPException(
                     status_code=404,
-                    detail="Patient not found"
+                    detail="Patient not found",
                 )
 
-@app.put("/patients/{patient_id}", response_model=Patient)
-def update_patient(patient_id: int, patient: PatientCreate):
+            log_audit_event(
+                user_id=current_user["id"],
+                action="patient.delete",
+                resource_type="patient",
+                resource_id=str(patient_id),
+                outcome="success",
+                connection=conn,
+            )
+
+
+@app.put(
+    "/patients/{patient_id}",
+    response_model=Patient,
+    dependencies=[Depends(require_permission("patients:write"))],
+)
+
+def update_patient(
+    patient_id: int,
+    patient: PatientCreate,
+    current_user: dict = Depends(get_current_user),
+):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -240,25 +318,35 @@ def update_patient(patient_id: int, patient: PatientCreate):
                     patient.last_name,
                     patient.date_of_birth,
                     patient.gender,
-                    patient_id
-                )
+                    patient_id,
+                ),
             )
 
             row = cursor.fetchone()
 
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found"
-        )
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Patient not found",
+                )
+
+            log_audit_event(
+                user_id=current_user["id"],
+                action="patient.update",
+                resource_type="patient",
+                resource_id=str(patient_id),
+                outcome="success",
+                connection=conn,
+            )
 
     return {
         "id": row[0],
         "first_name": row[1],
         "last_name": row[2],
         "date_of_birth": row[3],
-        "gender": row[4]
+        "gender": row[4],
     }
+
 
 
 
@@ -332,7 +420,11 @@ def get_fhir_metadata():
 
 
 
-@app.get("/fhir/Patient/{patient_id}")
+
+@app.get(
+    "/fhir/Patient/{patient_id}",
+    dependencies=[Depends(require_permission("patients:read"))],
+)
 def get_fhir_patient(patient_id: int):
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -375,7 +467,11 @@ def get_fhir_patient(patient_id: int):
 
 
 
-@app.get("/fhir/Patient")
+
+@app.get(
+    "/fhir/Patient",
+    dependencies=[Depends(require_permission("patients:read"))],
+)
 def get_fhir_patients(
     request: Request,
     family: str | None = None,
@@ -553,6 +649,7 @@ def get_fhir_patients(
 @app.post(
     "/hl7/adt",
     tags=["HL7 Integration"],
+    dependencies=[Depends(require_permission("patients:write"))],
     openapi_extra={
         "requestBody": {
             "required": True,

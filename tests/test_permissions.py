@@ -103,3 +103,22 @@ def test_permission_configuration():
         "admin",
         "scheduler",
     )
+
+import pytest
+
+from permissions import get_allowed_roles
+
+
+def test_audit_read_permission_is_admin_only():
+    allowed_roles = get_allowed_roles("audit:read")
+
+    assert allowed_roles == ("admin",)
+
+    assert "clinician" not in allowed_roles
+    assert "scheduler" not in allowed_roles
+    assert "viewer" not in allowed_roles
+
+
+def test_unknown_audit_permission_is_rejected():
+    with pytest.raises(ValueError, match="Unknown permission"):
+        get_allowed_roles("audit:write")

@@ -29,10 +29,15 @@ PERMISSIONS = {
         "admin",
         "scheduler",
     ),
+
     "users:manage": (
         "admin",
     ),
+    "audit:read": (
+        "admin",
+    ),
 }
+
 
 
 def get_allowed_roles(permission: str) -> tuple[str, ...]:

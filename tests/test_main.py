@@ -6,8 +6,54 @@ from models import Patient
 from fhir import patient_to_fhir
 from fhir import create_operation_outcome
 from database import get_connection
+import pytest
+from auth_dependencies import get_current_user
+from user_service import create_user, get_user_by_username
 
 client = TestClient(app)
+
+
+
+@pytest.fixture(autouse=True)
+def authenticated_admin():
+    original_overrides = app.dependency_overrides.copy()
+
+    with get_connection() as conn:
+        if conn.info.dbname != "medibridge_test":
+            raise RuntimeError(
+                "Test administrator setup requires medibridge_test."
+            )
+
+    test_admin = get_user_by_username("test_admin")
+
+    if test_admin is None:
+        test_admin = create_user(
+            username="test_admin",
+            email="admin@example.com",
+            password="TestOnlyPassword123!",
+            role="admin",
+        )
+
+    if test_admin["role"] != "admin" or not test_admin["is_active"]:
+        raise RuntimeError(
+            "The test administrator must be active and have the admin role."
+        )
+
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": test_admin["id"],
+        "username": test_admin["username"],
+        "email": test_admin["email"],
+        "role": test_admin["role"],
+        "is_active": test_admin["is_active"],
+    }
+
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(original_overrides)
+
+
 
 
 def test_health_check():
