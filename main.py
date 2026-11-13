@@ -1,23 +1,50 @@
 
+from typing import Literal
+from urllib.parse import urlencode
+
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Body,
+    Depends,
+    Form,
+    status,
+)
+from fastapi.responses import JSONResponse, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import (
+    request_validation_exception_handler,
+)
+
+from psycopg.errors import ExclusionViolation
+
 from database import (
     get_connection,
     get_patient_identifiers,
-    get_identifiers_for_patients
+    get_identifiers_for_patients,
 )
-from models import Patient, PatientCreate
-from fastapi import FastAPI, HTTPException, Query, Request, Body
-from fastapi.responses import JSONResponse, Response
-from fastapi.exceptions import RequestValidationError
-from fastapi.exception_handlers import request_validation_exception_handler
+
+from models import (
+    Patient,
+    PatientCreate,
+    Provider,
+    ProviderCreate,
+    Appointment,
+    AppointmentCreate,
+    AppointmentUpdate,
+)
+
 from fhir import patient_to_fhir, create_operation_outcome
-from urllib.parse import urlencode
+
 from hl7_service import (
     register_patient_from_hl7,
     update_patient_from_hl7,
 )
 from hl7_parser import parse_hl7_message
 from hl7_ack import generate_hl7_ack
-from models import Provider, ProviderCreate, Appointment, AppointmentCreate, AppointmentUpdate
+
 from provider_service import (
     create_provider,
     get_all_providers,
@@ -25,6 +52,7 @@ from provider_service import (
     update_provider,
     delete_provider,
 )
+
 from appointment_service import (
     create_appointment,
     get_all_appointments,
@@ -32,10 +60,20 @@ from appointment_service import (
     update_appointment,
     cancel_appointment,
 )
-from typing import Literal
-from psycopg.errors import ExclusionViolation
 
+from auth_dependencies import (
+    get_current_user,
+    require_roles,
+    require_permission,
+)
+from auth_service import authenticate_user
+from token_service import (
+    create_access_token,
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
+)
 
+from audit import log_audit_event
+from audit_service import get_audit_logs
 
 
 
@@ -79,7 +117,32 @@ def health_check():
     }
 
 
-@app.get("/patients", response_model=list[Patient])
+@app.get("/audit-logs")
+def list_audit_logs(
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    current_user: dict = Depends(
+        require_permission("audit:read")
+    ),
+):
+    """Retrieve audit history for authorized administrators."""
+
+    return {
+        "limit": limit,
+        "offset": offset,
+        "items": get_audit_logs(
+            limit=limit,
+            offset=offset,
+        ),
+    }
+
+
+
+@app.get(
+    "/patients",
+    response_model=list[Patient],
+    dependencies=[Depends(require_permission("patients:read"))],
+)
 def get_patients():
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -105,7 +168,11 @@ def get_patients():
     ]
 
 
-@app.get("/patients/{patient_id}", response_model=Patient)
+@app.get(
+    "/patients/{patient_id}",
+    response_model=Patient,
+    dependencies=[Depends(require_permission("patients:read"))],
+)
 def get_patient(patient_id: int):
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -135,8 +202,17 @@ def get_patient(patient_id: int):
     }
 
 
-@app.post("/patients", response_model=Patient, status_code=201)
-def create_patient(patient: PatientCreate):
+@app.post(
+    "/patients",
+    response_model=Patient,
+    status_code=201,
+    dependencies=[Depends(require_permission("patients:write"))],
+)
+
+def create_patient(
+    patient: PatientCreate,
+    current_user: dict = Depends(get_current_user),
+):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -154,27 +230,46 @@ def create_patient(patient: PatientCreate):
                     patient.first_name,
                     patient.last_name,
                     patient.date_of_birth,
-                    patient.gender
-                )
+                    patient.gender,
+                ),
             )
 
             row = cursor.fetchone()
+
+        log_audit_event(
+            action="patient.create",
+            resource_type="patient",
+            resource_id=str(row[0]),
+            outcome="success",
+            user_id=current_user["id"],
+            details={"source": "api"},
+            connection=conn,
+        )
 
     return {
         "id": row[0],
         "first_name": row[1],
         "last_name": row[2],
         "date_of_birth": row[3],
-        "gender": row[4]
+        "gender": row[4],
     }
 
-@app.delete("/patients/{patient_id}", status_code=204)
-def delete_patient(patient_id: int):
+
+@app.delete(
+    "/patients/{patient_id}",
+    status_code=204,
+    dependencies=[Depends(require_permission("patients:write"))],
+)
+
+def delete_patient(
+    patient_id: int,
+    current_user: dict = Depends(get_current_user),
+):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 "DELETE FROM patients WHERE id = %s RETURNING id",
-                (patient_id,)
+                (patient_id,),
             )
 
             deleted_patient = cursor.fetchone()
@@ -182,11 +277,30 @@ def delete_patient(patient_id: int):
             if deleted_patient is None:
                 raise HTTPException(
                     status_code=404,
-                    detail="Patient not found"
+                    detail="Patient not found",
                 )
 
-@app.put("/patients/{patient_id}", response_model=Patient)
-def update_patient(patient_id: int, patient: PatientCreate):
+            log_audit_event(
+                user_id=current_user["id"],
+                action="patient.delete",
+                resource_type="patient",
+                resource_id=str(patient_id),
+                outcome="success",
+                connection=conn,
+            )
+
+
+@app.put(
+    "/patients/{patient_id}",
+    response_model=Patient,
+    dependencies=[Depends(require_permission("patients:write"))],
+)
+
+def update_patient(
+    patient_id: int,
+    patient: PatientCreate,
+    current_user: dict = Depends(get_current_user),
+):
     with get_connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
@@ -204,25 +318,35 @@ def update_patient(patient_id: int, patient: PatientCreate):
                     patient.last_name,
                     patient.date_of_birth,
                     patient.gender,
-                    patient_id
-                )
+                    patient_id,
+                ),
             )
 
             row = cursor.fetchone()
 
-    if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found"
-        )
+            if row is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Patient not found",
+                )
+
+            log_audit_event(
+                user_id=current_user["id"],
+                action="patient.update",
+                resource_type="patient",
+                resource_id=str(patient_id),
+                outcome="success",
+                connection=conn,
+            )
 
     return {
         "id": row[0],
         "first_name": row[1],
         "last_name": row[2],
         "date_of_birth": row[3],
-        "gender": row[4]
+        "gender": row[4],
     }
+
 
 
 
@@ -296,7 +420,11 @@ def get_fhir_metadata():
 
 
 
-@app.get("/fhir/Patient/{patient_id}")
+
+@app.get(
+    "/fhir/Patient/{patient_id}",
+    dependencies=[Depends(require_permission("patients:read"))],
+)
 def get_fhir_patient(patient_id: int):
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -339,7 +467,11 @@ def get_fhir_patient(patient_id: int):
 
 
 
-@app.get("/fhir/Patient")
+
+@app.get(
+    "/fhir/Patient",
+    dependencies=[Depends(require_permission("patients:read"))],
+)
 def get_fhir_patients(
     request: Request,
     family: str | None = None,
@@ -517,6 +649,7 @@ def get_fhir_patients(
 @app.post(
     "/hl7/adt",
     tags=["HL7 Integration"],
+    dependencies=[Depends(require_permission("patients:write"))],
     openapi_extra={
         "requestBody": {
             "required": True,
@@ -618,6 +751,7 @@ async def receive_hl7_adt(request: Request):
     response_model=Provider,
     status_code=201,
     tags=["Providers"],
+    dependencies=[Depends(require_permission("providers:write"))],
 )
 def create_provider_endpoint(provider: ProviderCreate):
     """
@@ -630,6 +764,7 @@ def create_provider_endpoint(provider: ProviderCreate):
     "/providers",
     response_model=list[Provider],
     tags=["Providers"],
+    dependencies=[Depends(require_permission("providers:read"))],
 )
 def list_providers_endpoint():
     """
@@ -641,6 +776,7 @@ def list_providers_endpoint():
     "/providers/{provider_id}",
     response_model=Provider,
     tags=["Providers"],
+    dependencies=[Depends(require_permission("providers:read"))],
 )
 def get_provider_endpoint(provider_id: int):
     """
@@ -660,6 +796,7 @@ def get_provider_endpoint(provider_id: int):
     "/providers/{provider_id}",
     response_model=Provider,
     tags=["Providers"],
+    dependencies=[Depends(require_permission("providers:write"))],
 )
 def update_provider_endpoint(
     provider_id: int,
@@ -682,7 +819,9 @@ def update_provider_endpoint(
     "/providers/{provider_id}",
     status_code=204,
     tags=["Providers"],
+    dependencies=[Depends(require_permission("providers:write"))],
 )
+
 def delete_provider_endpoint(provider_id: int):
     """
     Delete a healthcare provider by ID.
@@ -704,6 +843,7 @@ def delete_provider_endpoint(provider_id: int):
     response_model=Appointment,
     status_code=201,
     tags=["Appointments"],
+    dependencies=[Depends(require_permission("appointments:write"))],
     responses={
         409: {
             "description": "Provider scheduling conflict",
@@ -743,6 +883,7 @@ def create_appointment_endpoint(appointment: AppointmentCreate):
     "/appointments",
     response_model=list[Appointment],
     tags=["Appointments"],
+    dependencies=[Depends(require_permission("appointments:read"))],
 )
 def list_appointments_endpoint(
     patient_id: int | None = None,
@@ -759,6 +900,7 @@ def list_appointments_endpoint(
     "/appointments/{appointment_id}",
     response_model=Appointment,
     tags=["Appointments"],
+    dependencies=[Depends(require_permission("appointments:read"))],
 )
 def get_appointment_endpoint(appointment_id: int):
     appointment = get_appointment_by_id(appointment_id)
@@ -777,6 +919,7 @@ def get_appointment_endpoint(appointment_id: int):
     "/appointments/{appointment_id}",
     response_model=Appointment,
     tags=["Appointments"],
+    dependencies=[Depends(require_permission("appointments:write"))],
     responses={
         409: {
             "description": "Provider scheduling conflict",
@@ -829,6 +972,7 @@ def update_appointment_endpoint(
     "/appointments/{appointment_id}/cancel",
     response_model=Appointment,
     tags=["Appointments"],
+    dependencies=[Depends(require_permission("appointments:write"))],
 )
 def cancel_appointment_endpoint(appointment_id: int):
     cancelled_appointment = cancel_appointment(appointment_id)
@@ -840,3 +984,47 @@ def cancel_appointment_endpoint(appointment_id: int):
         )
 
     return cancelled_appointment
+
+@app.get("/auth/me", tags=["Authentication"])
+def read_current_user(
+    current_user: dict = Depends(get_current_user),
+):
+    """Return the currently authenticated user's information."""
+    return current_user
+
+
+@app.post("/auth/login", tags=["Authentication"])
+def login(
+    username: str = Form(...),
+    password: str = Form(...),
+):
+    """Authenticate a user and issue a JWT access token."""
+
+    user = authenticate_user(username, password)
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    access_token = create_access_token(user["id"])
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_in": JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
+
+@app.get("/auth/admin-check", tags=["Authentication"])
+def admin_check(
+    current_user: dict = Depends(require_roles("admin")),
+):
+    """Verify that the authenticated user has administrator access."""
+
+    return {
+        "message": "Administrator access granted",
+        "username": current_user["username"],
+        "role": current_user["role"],
+    }

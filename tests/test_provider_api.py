@@ -10,6 +10,28 @@ from main import app
 client = TestClient(app)
 
 
+import pytest
+from auth_dependencies import get_current_user
+
+
+@pytest.fixture(autouse=True)
+def authenticated_admin():
+    def fake_current_user():
+        return {
+            "id": 1,
+            "username": "test_admin",
+            "email": "admin@example.com",
+            "role": "admin",
+            "is_active": True,
+        }
+
+    app.dependency_overrides[get_current_user] = fake_current_user
+
+    yield
+
+    app.dependency_overrides.pop(get_current_user, None)
+
+
 def sample_provider():
     return {
         "id": 1,

@@ -2,9 +2,30 @@
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 from main import app
+import pytest
+from auth_dependencies import get_current_user
+
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def authenticated_admin():
+    original_overrides = app.dependency_overrides.copy()
+
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": 1,
+        "username": "test_admin",
+        "email": "admin@example.com",
+        "role": "admin",
+        "is_active": True,
+    }
+
+    yield
+
+    app.dependency_overrides.clear()
+    app.dependency_overrides.update(original_overrides)
 
 
 def test_hl7_adt_endpoint_success():
