@@ -36,7 +36,7 @@ from models import (
     AppointmentUpdate,
 )
 
-from fhir import patient_to_fhir, provider_to_fhir, create_operation_outcome
+from fhir import patient_to_fhir, provider_to_fhir, provider_to_practitioner_role, create_operation_outcome
 
 from hl7_service import (
     register_patient_from_hl7,
@@ -363,7 +363,7 @@ def get_fhir_metadata():
         "publisher": "MediBridge Healthcare Platform",
         "description": (
             "MediBridge is a healthcare interoperability platform "
-            "providing FHIR R4 Patient and Practitioner resource access and search."
+            "providing FHIR R4 Patient, Practitioner, and PractitionerRole resource access and search."
         ),
         "kind": "instance",
         "software": {
@@ -432,6 +432,26 @@ def get_fhir_metadata():
                                 "type": "string",
                                 "documentation": (
                                     "Search practitioners by given name."
+                                )
+                            }
+                        ]
+                    },
+                    {
+                        "type": "PractitionerRole",
+                        "profile": "http://hl7.org/fhir/StructureDefinition/PractitionerRole",
+                        "interaction": [
+                            {"code": "read"},
+                            {"code": "search-type"}
+                        ],
+                        "searchParam": [
+                            {
+                                "name": "specialty",
+                                "type": "token",
+                                "documentation": (
+                                    "Currently supports case-insensitive prefix "
+                                    "matching against specialty display text. "
+                                    "FHIR token system|code matching is not yet "
+                                    "implemented."
                                 )
                             }
                         ]
@@ -1153,3 +1173,96 @@ def search_fhir_practitioners(
         content=bundle,
         media_type="application/fhir+json",
     )
+
+@app.get(
+    "/fhir/PractitionerRole/{role_id}",
+    dependencies=[Depends(require_permission("providers:read"))],
+)
+def get_fhir_practitioner_role(role_id: int):
+    provider = get_provider_by_id(role_id)
+
+    if provider is None:
+        return JSONResponse(
+            status_code=404,
+            content=create_operation_outcome(
+                code="not-found",
+                diagnostics="PractitionerRole not found"
+            ),
+            media_type="application/fhir+json"
+        )
+
+    return JSONResponse(
+        content=provider_to_practitioner_role(provider),
+        media_type="application/fhir+json"
+    )
+
+@app.get(
+    "/fhir/PractitionerRole",
+    dependencies=[Depends(require_permission("providers:read"))],
+)
+def search_fhir_practitioner_roles(
+    request: Request,
+    specialty: str | None = None,
+    count: int = Query(10, alias="_count", ge=1, le=100),
+    offset: int = Query(0, alias="_offset", ge=0),
+):
+    providers, total = search_providers(
+        specialty=specialty,
+        count=count,
+        offset=offset,
+    )
+
+    def page_url(page_offset: int) -> str:
+        params = {}
+
+        if specialty is not None:
+            params["specialty"] = specialty
+
+        params["_count"] = count
+        params["_offset"] = page_offset
+
+        return f"{request.url.path}?{urlencode(params)}"
+
+    links = [
+        {
+            "relation": "self",
+            "url": page_url(offset),
+        }
+    ]
+
+    if offset + count < total:
+        links.append({
+            "relation": "next",
+            "url": page_url(offset + count),
+        })
+
+    if offset > 0:
+        links.append({
+            "relation": "previous",
+            "url": page_url(max(0, offset - count)),
+        })
+
+    bundle = {
+        "resourceType": "Bundle",
+        "type": "searchset",
+        "total": total,
+        "link": links,
+        "entry": [
+            {
+                "fullUrl": str(
+                    request.url_for(
+                        "get_fhir_practitioner_role",
+                        role_id=provider["id"],
+                    )
+                ),
+                "resource": provider_to_practitioner_role(provider),
+            }
+            for provider in providers
+        ],
+    }
+
+    return JSONResponse(
+        content=bundle,
+        media_type="application/fhir+json",
+    )
+
