@@ -199,3 +199,78 @@ def delete_provider(provider_id: int) -> bool:
             deleted_row = cur.fetchone()
 
     return deleted_row is not None
+
+
+def search_providers(
+    family: str | None = None,
+    given: str | None = None,
+    count: int = 10,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """Search providers with filters and database pagination."""
+
+    def prefix_pattern(value: str) -> str:
+        escaped = (
+            value.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        return f"{escaped}%"
+
+    conditions = []
+    params = []
+
+    if family is not None:
+        conditions.append("last_name ILIKE %s")
+        params.append(prefix_pattern(family))
+
+    if given is not None:
+        conditions.append("first_name ILIKE %s")
+        params.append(prefix_pattern(given))
+
+    where_clause = (
+        "WHERE " + " AND ".join(conditions)
+        if conditions
+        else ""
+    )
+
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT
+                    id, first_name, last_name,
+                    specialty, email, phone, created_at
+                FROM providers
+                {where_clause}
+                ORDER BY id
+                LIMIT %s OFFSET %s
+                """,
+                (*params, count, offset),
+            )
+            rows = cur.fetchall()
+
+            cur.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM providers
+                {where_clause}
+                """,
+                tuple(params),
+            )
+            total = cur.fetchone()[0]
+
+    providers = [
+        {
+            "id": row[0],
+            "first_name": row[1],
+            "last_name": row[2],
+            "specialty": row[3],
+            "email": row[4],
+            "phone": row[5],
+            "created_at": row[6],
+        }
+        for row in rows
+    ]
+
+    return providers, total
