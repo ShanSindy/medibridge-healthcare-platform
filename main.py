@@ -36,7 +36,7 @@ from models import (
     AppointmentUpdate,
 )
 
-from fhir import patient_to_fhir, create_operation_outcome
+from fhir import patient_to_fhir, provider_to_fhir, create_operation_outcome
 
 from hl7_service import (
     register_patient_from_hl7,
@@ -363,7 +363,7 @@ def get_fhir_metadata():
         "publisher": "MediBridge Healthcare Platform",
         "description": (
             "MediBridge is a healthcare interoperability platform "
-            "providing FHIR R4 Patient resource access and search."
+            "providing FHIR R4 Patient and Practitioner resource access and search."
         ),
         "kind": "instance",
         "software": {
@@ -408,6 +408,30 @@ def get_fhir_metadata():
                                     "Search patients by identifier value "
                                     "or by system and value using "
                                     "system|value."
+                                )
+                            }
+                        ]
+                    },
+                    {
+                        "type": "Practitioner",
+                        "profile": "http://hl7.org/fhir/StructureDefinition/Practitioner",
+                        "interaction": [
+                            {"code": "read"},
+                            {"code": "search-type"}
+                        ],
+                        "searchParam": [
+                            {
+                                "name": "family",
+                                "type": "string",
+                                "documentation": (
+                                    "Search practitioners by family name."
+                                )
+                            },
+                            {
+                                "name": "given",
+                                "type": "string",
+                                "documentation": (
+                                    "Search practitioners by given name."
                                 )
                             }
                         ]
@@ -1028,3 +1052,104 @@ def admin_check(
         "username": current_user["username"],
         "role": current_user["role"],
     }
+
+
+@app.get(
+    "/fhir/Practitioner/{practitioner_id}",
+    dependencies=[Depends(require_permission("providers:read"))],
+)
+def get_fhir_practitioner(practitioner_id: int):
+    provider = get_provider_by_id(practitioner_id)
+
+    if provider is None:
+        return JSONResponse(
+            status_code=404,
+            content=create_operation_outcome(
+                code="not-found",
+                diagnostics="Practitioner not found"
+            ),
+            media_type="application/fhir+json"
+        )
+
+    return JSONResponse(
+        content=provider_to_fhir(provider),
+        media_type="application/fhir+json"
+    )
+
+from provider_service import search_providers
+
+
+@app.get(
+    "/fhir/Practitioner",
+    dependencies=[Depends(require_permission("providers:read"))],
+)
+def search_fhir_practitioners(
+    request: Request,
+    family: str | None = None,
+    given: str | None = None,
+    count: int = Query(10, alias="_count", ge=1, le=100),
+    offset: int = Query(0, alias="_offset", ge=0),
+):
+    providers, total = search_providers(
+        family=family,
+        given=given,
+        count=count,
+        offset=offset,
+    )
+
+    def page_url(page_offset: int) -> str:
+        params = {}
+
+        if family is not None:
+            params["family"] = family
+
+        if given is not None:
+            params["given"] = given
+
+        params["_count"] = count
+        params["_offset"] = page_offset
+
+        return f"{request.url.path}?{urlencode(params)}"
+
+    links = [
+        {
+            "relation": "self",
+            "url": page_url(offset),
+        }
+    ]
+
+    if offset + count < total:
+        links.append({
+            "relation": "next",
+            "url": page_url(offset + count),
+        })
+
+    if offset > 0:
+        links.append({
+            "relation": "previous",
+            "url": page_url(max(0, offset - count)),
+        })
+
+    bundle = {
+        "resourceType": "Bundle",
+        "type": "searchset",
+        "total": total,
+        "link": links,
+        "entry": [
+            {
+                "fullUrl": str(
+                    request.url_for(
+                        "get_fhir_practitioner",
+                        practitioner_id=provider["id"],
+                    )
+                ),
+                "resource": provider_to_fhir(provider),
+            }
+            for provider in providers
+        ],
+    }
+
+    return JSONResponse(
+        content=bundle,
+        media_type="application/fhir+json",
+    )

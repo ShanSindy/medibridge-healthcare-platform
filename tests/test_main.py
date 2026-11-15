@@ -946,7 +946,7 @@ def test_fhir_capability_statement():
     assert data["publisher"] == "MediBridge Healthcare Platform"
     assert data["description"] == (
         "MediBridge is a healthcare interoperability platform "
-        "providing FHIR R4 Patient resource access and search."
+        "providing FHIR R4 Patient and Practitioner resource access and search."
     )
     assert data["kind"] == "instance"
     assert data["fhirVersion"] == "4.0.1"

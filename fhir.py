@@ -48,3 +48,35 @@ def create_operation_outcome(
             }
         ]
     }
+
+def provider_to_fhir(provider: dict) -> dict:
+    resource = {
+        "resourceType": "Practitioner",
+        "id": str(provider["id"]),
+        "name": [
+            {
+                "use": "official",
+                "family": provider["last_name"],
+                "given": [provider["first_name"]]
+            }
+        ]
+    }
+
+    telecom = []
+
+    if provider.get("email"):
+        telecom.append({
+            "system": "email",
+            "value": provider["email"]
+        })
+
+    if provider.get("phone"):
+        telecom.append({
+            "system": "phone",
+            "value": provider["phone"]
+        })
+
+    if telecom:
+        resource["telecom"] = telecom
+
+    return resource
