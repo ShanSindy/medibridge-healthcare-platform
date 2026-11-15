@@ -80,3 +80,18 @@ def provider_to_fhir(provider: dict) -> dict:
         resource["telecom"] = telecom
 
     return resource
+
+def provider_to_practitioner_role(provider: dict) -> dict:
+    return {
+        "resourceType": "PractitionerRole",
+        "id": str(provider["id"]),
+        "practitioner": {
+            "reference": f'Practitioner/{provider["id"]}'
+        },
+        "specialty": [
+            {
+                "text": provider["specialty"]
+            }
+        ]
+    }
+

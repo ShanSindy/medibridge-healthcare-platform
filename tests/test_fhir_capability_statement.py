@@ -64,3 +64,53 @@ def test_fhir_metadata_advertises_search_parameters():
     assert resources["Practitioner"]["profile"] == (
         "http://hl7.org/fhir/StructureDefinition/Practitioner"
     )
+
+
+def test_fhir_metadata_advertises_practitioner_role():
+    response = client.get("/fhir/metadata")
+
+    assert response.status_code == 200
+
+    resources = {
+        resource["type"]: resource
+        for resource in response.json()["rest"][0]["resource"]
+    }
+
+    assert "PractitionerRole" in resources
+
+    role = resources["PractitionerRole"]
+
+    assert role["profile"] == (
+        "http://hl7.org/fhir/StructureDefinition/PractitionerRole"
+    )
+
+    interactions = {
+        interaction["code"]
+        for interaction in role["interaction"]
+    }
+
+    assert {"read", "search-type"} <= interactions
+
+
+def test_fhir_metadata_advertises_practitioner_role_specialty_search():
+    response = client.get("/fhir/metadata")
+
+    assert response.status_code == 200
+
+    resources = {
+        resource["type"]: resource
+        for resource in response.json()["rest"][0]["resource"]
+    }
+
+    search_params = {
+        param["name"]: param
+        for param in resources["PractitionerRole"]["searchParam"]
+    }
+
+    assert "specialty" in search_params
+    assert search_params["specialty"]["type"] == "token"
+    assert "prefix" in search_params["specialty"]["documentation"]
+    assert "not yet implemented" in (
+        search_params["specialty"]["documentation"]
+    )
+

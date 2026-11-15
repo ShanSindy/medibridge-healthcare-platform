@@ -206,6 +206,7 @@ def search_providers(
     given: str | None = None,
     count: int = 10,
     offset: int = 0,
+    specialty: str | None = None,
 ) -> tuple[list[dict], int]:
     """Search providers with filters and database pagination."""
 
@@ -227,6 +228,10 @@ def search_providers(
     if given is not None:
         conditions.append("first_name ILIKE %s")
         params.append(prefix_pattern(given))
+
+    if specialty is not None:
+        conditions.append("specialty ILIKE %s")
+        params.append(prefix_pattern(specialty))
 
     where_clause = (
         "WHERE " + " AND ".join(conditions)
