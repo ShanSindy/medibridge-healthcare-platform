@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/*
+ * MediBridge design tokens.
+ * Navy is used for text and structure; teal ("brand") is the restrained accent.
+ */
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+
+  --color-navy-50: #f3f6fb;
+  --color-navy-100: #e4eaf4;
+  --color-navy-200: #c9d4e6;
+  --color-navy-300: #9fb0cf;
+  --color-navy-400: #7186ad;
+  --color-navy-500: #4d638d;
+  --color-navy-600: #374b72;
+  --color-navy-700: #29395a;
+  --color-navy-800: #1c2943;
+  --color-navy-900: #121c31;
+  --color-navy-950: #0a1222;
+
+  --color-brand-50: #effaf9;
+  --color-brand-100: #d5f2ef;
+  --color-brand-200: #ade4df;
+  --color-brand-300: #77cfc8;
+  --color-brand-400: #3fb3ad;
+  --color-brand-500: #1f9792;
+  --color-brand-600: #157a77;
+  --color-brand-700: #146261;
+  --color-brand-800: #144f4e;
+  --color-brand-900: #134241;
+
+  --color-canvas: #f6f8fb;
+}
+
+@layer base {
+  :root {
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: light;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background-color: var(--color-canvas);
+    color: var(--color-navy-900);
+    font-family: var(--font-sans);
+  }
+}
