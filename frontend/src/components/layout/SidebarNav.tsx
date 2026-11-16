@@ -70,7 +70,7 @@ export function SidebarNav({ currentPath, onNavigate }: SidebarNavProps) {
         <div className="m-3 rounded-lg border border-brand-200 bg-brand-50/70 p-3 text-xs text-brand-900">
           <p className="font-semibold">API mode</p>
           <p className="mt-0.5 text-brand-800">
-            The Dashboard and Patients pages show live data from the MediBridge API. All other pages use synthetic demo data.
+            The Dashboard, Patients and Providers pages show live data from the MediBridge API. All other pages use synthetic demo data.
           </p>
         </div>
       ) : (

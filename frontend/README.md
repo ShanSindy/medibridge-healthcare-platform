@@ -1,8 +1,8 @@
 # MediBridge Healthcare Platform — Dashboard
 
 React dashboard for the MediBridge Healthcare Platform. It runs on synthetic
-demo data by default, and the **Dashboard** and **Patients** pages can
-optionally read live data from the MediBridge FastAPI backend.
+demo data by default, and the **Dashboard**, **Patients** and **Providers**
+pages can optionally read live data from the MediBridge FastAPI backend.
 
 **Stack:** React 19 · TypeScript · Vite 8 · Tailwind CSS v4 · Vitest
 
@@ -35,10 +35,10 @@ Open the URL Vite prints (usually http://localhost:5173). The app starts in
 
 The data source is chosen at build/start time with `VITE_DATA_SOURCE`.
 
-| Mode | Value | Dashboard and Patients | Everything else |
+| Mode | Value | Dashboard, Patients and Providers | Everything else |
 |---|---|---|---|
 | Demo (default) | `demo` or unset | Synthetic records | Synthetic records |
-| API | `api` | Live `GET /patients` and `GET /health` (sign-in required for patients) | Synthetic records |
+| API | `api` | Live `GET /patients`, `GET /providers` and `GET /health` (sign-in required for records) | Synthetic records |
 
 Any value other than `api` falls back to demo mode. The top bar always shows
 which mode is active.
@@ -139,7 +139,8 @@ no credentials are stored in the code.
 |---|---|---|
 | Dashboard | Synthetic: summary cards, charts, schedule, activity | **Live API**: patient total and demographics, API health. Other sections are hidden |
 | Patients | Synthetic | **Live API**: name, date of birth, gender |
-| Providers, Appointments | Synthetic | Synthetic |
+| Providers | Synthetic | **Live API**: name, specialty, email, phone, created date |
+| Appointments | Synthetic | Synthetic |
 | FHIR Explorer, HL7 Integration, Audit Logs | Informational placeholders | Informational placeholders |
 | Settings | Saved in the browser only | Saved in the browser only |
 
@@ -156,6 +157,36 @@ API responses are validated before display. A response that is not a list, or
 that contains a malformed record (for example an impossible date of birth such
 as `1990-02-30`), is rejected as a whole and shown as an error rather than
 partially displayed.
+
+## Providers
+
+The Providers page is a searchable directory with a detail view for each
+provider.
+
+| | Demo mode | API mode |
+|---|---|---|
+| Directory | Synthetic records | `GET /providers` |
+| Detail view | Synthetic record | `GET /providers/{id}`, re-read when opened |
+| Search | Name, specialty, department, location | Name, specialty, email, phone, provider ID |
+| Specialty filter | Yes | Yes, built from the specialties returned |
+| Accepting-new-patients filter | Yes | Hidden: the backend does not store it |
+| Refresh | Reloads the demo data | Reloads from the API |
+
+Every signed-in role (`admin`, `clinician`, `scheduler`, `viewer`) has the
+backend `providers:read` permission. The backend provider model has only
+`id`, `first_name`, `last_name`, `specialty`, `email`, `phone` and
+`created_at`; email and phone are optional and are shown as "not on file"
+when missing. Credentials, department, location and new-patient availability
+exist only in demo data and are never shown for API records.
+
+`GET /providers` has no pagination, search or filter parameters, so the page
+loads the full list and filters it in the browser. If a provider is deleted
+after the list loaded, opening it shows a "no longer exists" message with a
+button to refresh the directory.
+
+The backend also has `POST /providers`, `PUT /providers/{id}` and
+`DELETE /providers/{id}` (admin only). The dashboard does not call them: the
+Providers page is read-only.
 
 ## Dashboard
 
@@ -196,6 +227,9 @@ cover (`src/**/*.test.ts`) and stub `fetch`, so they never call a real server:
 - `services/auth.test.ts` — sign-in, invalid responses, expiry and sign-out
 - `services/patientMapper.test.ts` — validation and snake_case → camelCase mapping
 - `services/patients.test.ts` — demo vs API retrieval, 401/403, retries, invalid data
+- `services/providerMapper.test.ts` — provider validation, optional fields, mapping
+- `services/providers.test.ts` — provider list and detail: demo vs API, 401/403/404, network, invalid data
+- `lib/providerFilters.test.ts` — provider search, specialty and availability filters
 - `services/dashboardTrends.test.ts` — chart aggregations (months, days, hours, demographics)
 - `services/systemStatus.test.ts` — health reporting, including unreachable and unhealthy APIs
 
@@ -254,8 +288,11 @@ Sign in again.
 
 ## Known limitations
 
-- Only the Dashboard and Patients pages use the API. Providers, Appointments,
+- Only the Dashboard, Patients and Providers pages use the API. Appointments,
   FHIR Explorer, HL7 Integration and Audit Logs do not call the backend yet.
+- The Providers page is read-only. Creating, editing and deleting providers
+  is supported by the backend for admins but has no screen in the dashboard.
+- `GET /providers` has no pagination or server-side search either.
 - `GET /patients` has no pagination or server-side search. The page loads the
   full list and filters it in the browser, which suits small data sets only.
 - The API returns five patient fields. MRN, contact details, care status,

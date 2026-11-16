@@ -79,7 +79,7 @@ function DemoModeStatus() {
   )
 }
 
-/** API mode: the Dashboard and Patients read live data; every other page remains demo data. */
+/** API mode: the Dashboard, Patients and Providers read live data; every other page remains demo data. */
 function ApiModeStatus() {
   const { session } = useAuthSession()
   const user = session?.user ?? null
@@ -88,7 +88,7 @@ function ApiModeStatus() {
     <>
       <span className="hidden lg:inline-flex">
         <Badge tone="brand" dot>
-          Live API: Dashboard and Patients · Other pages: demo data
+          Live API: Dashboard, Patients, Providers · Other pages: demo data
         </Badge>
       </span>
       <span className="lg:hidden">

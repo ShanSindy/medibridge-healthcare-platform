@@ -49,19 +49,35 @@ export interface Patient {
   registeredAt: string | null
 }
 
+/**
+ * A healthcare provider.
+ *
+ * `id`, names, specialty, email, phone and the creation time are provided by
+ * the backend (`GET /providers`). Every other field is `null` when the source
+ * does not provide it — the UI must show it as unavailable, never invent a value.
+ */
 export interface Provider {
   id: number
-  /** Display prefix such as "Dr."; null for non-physician clinicians. */
-  prefix: string | null
+  recordSource: RecordSource
   firstName: string
   lastName: string
-  credentials: string
   specialty: string
-  department: string
-  email: string
-  phone: string
-  location: string
-  acceptingNewPatients: boolean
+  /** Optional in the backend. */
+  email: string | null
+  /** Optional in the backend. */
+  phone: string | null
+  /** ISO timestamp the record was created. Not present in demo data. */
+  createdAt: string | null
+  /** Display prefix such as "Dr.". Demo only; not returned by the backend. */
+  prefix: string | null
+  /** Demo only; not returned by the backend. */
+  credentials: string | null
+  /** Demo only; not returned by the backend. */
+  department: string | null
+  /** Demo only; not returned by the backend. */
+  location: string | null
+  /** Demo only; not returned by the backend. */
+  acceptingNewPatients: boolean | null
 }
 
 /** Mirrors the backend `Appointment.status` literal. */
