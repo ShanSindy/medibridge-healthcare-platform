@@ -13,13 +13,19 @@ interface SignInPanelProps {
   endedReason: SessionEndReason
   /** What the user is signing in to see, e.g. "patient records". */
   resourceLabel: string
+  /** Who may view the resource. Defaults to the roles allowed to read patients. */
+  accessNote?: string
 }
 
 /**
  * Sign-in form for the MediBridge API (`POST /auth/login`).
  * On success the shared auth store updates and the caller re-renders.
  */
-export function SignInPanel({ endedReason, resourceLabel }: SignInPanelProps) {
+export function SignInPanel({
+  endedReason,
+  resourceLabel,
+  accessNote = 'Access requires the admin, clinician or scheduler role.',
+}: SignInPanelProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState(false)
@@ -58,7 +64,7 @@ export function SignInPanel({ endedReason, resourceLabel }: SignInPanelProps) {
           <div>
             <h2 className="text-[15px] font-semibold text-navy-900">Sign in to view {resourceLabel}</h2>
             <p className="mt-0.5 text-sm text-slate-500">
-              Use your MediBridge account. Access requires the admin, clinician or scheduler role.
+              Use your MediBridge account. {accessNote}
             </p>
           </div>
         </div>

@@ -54,7 +54,7 @@ export function PatientsPage() {
 /* Demo mode                                                           */
 /* ------------------------------------------------------------------ */
 
-const fetchDemoDirectory = () => Promise.all([listPatients({ source: 'demo' }), listProviders()])
+const fetchDemoDirectory = () => Promise.all([listPatients({ source: 'demo' }), listProviders({ source: 'demo' })])
 
 function DemoPatientsView() {
   const { state, reload } = useAsync(fetchDemoDirectory)

@@ -34,6 +34,8 @@ const SEEDS: ProviderSeed[] = [
 export const demoProviders: Provider[] = SEEDS.map(
   ([prefix, firstName, lastName, credentials, specialty, department, location, accepting], index) => ({
     id: index + 1,
+    recordSource: 'demo',
+    createdAt: null,
     prefix,
     firstName,
     lastName,
