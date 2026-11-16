@@ -1,4 +1,13 @@
 import { AppointmentStatusBadge } from '../components/domain/StatusBadges'
+import { ApiOverview } from '../components/dashboard/ApiOverview'
+import { DashboardToolbar } from '../components/dashboard/DashboardToolbar'
+import { SystemStatusCard } from '../components/dashboard/SystemStatusCard'
+import {
+  AppointmentActivityCard,
+  DemographicsCard,
+  Hl7ActivityCard,
+  RegistrationTrendCard,
+} from '../components/dashboard/TrendCards'
 import { AsyncContent } from '../components/ui/AsyncContent'
 import { Badge } from '../components/ui/Badge'
 import { Card } from '../components/ui/Card'
@@ -6,18 +15,18 @@ import { Icon, type IconName } from '../components/ui/Icon'
 import { DemoBadge } from '../components/ui/Misc'
 import { StatCard } from '../components/ui/StatCard'
 import { EmptyState } from '../components/ui/States'
+import { DATA_SOURCE } from '../config/api'
 import { useAsync } from '../hooks/useAsync'
-import { DEMO_NOW } from '../lib/clock'
 import { cx, focusRing } from '../lib/cx'
 import {
   durationMinutes,
-  formatLongDate,
   formatNumber,
   formatRelative,
   formatTime,
 } from '../lib/format'
 import { routeHref } from '../routes'
 import { getDashboardOverview } from '../services/dashboard'
+import { getSystemStatus } from '../services/systemStatus'
 import type {
   ActivityCategory,
   ActivityEvent,
@@ -27,27 +36,53 @@ import type {
 } from '../types/domain'
 
 export function OverviewPage() {
-  const { state, reload } = useAsync(getDashboardOverview)
+  return DATA_SOURCE === 'api' ? <ApiOverview /> : <DemoOverview />
+}
+
+const fetchDemoStatus = () => getSystemStatus({ source: 'demo' })
+
+function DemoOverview() {
+  const overview = useAsync(getDashboardOverview)
+  const status = useAsync(fetchDemoStatus)
+  const refreshing = overview.refreshing || status.refreshing
+
+  function refreshAll() {
+    overview.refresh()
+    status.refresh()
+  }
+
   return (
-    <AsyncContent state={state} onRetry={reload} loadingLabel="Loading dashboard" errorTitle="Unable to load dashboard">
-      {(data) => <OverviewContent data={data} />}
-    </AsyncContent>
+    <div className="space-y-6">
+      <DashboardToolbar
+        lastRefreshedAt={overview.lastSuccessAt}
+        refreshing={refreshing}
+        disabled={overview.state.status === 'loading' || refreshing}
+        onRefresh={refreshAll}
+        badge={<DemoBadge />}
+      />
+
+      <AsyncContent
+        state={overview.state}
+        onRetry={overview.reload}
+        loadingLabel="Loading dashboard"
+        errorTitle="Unable to load dashboard"
+      >
+        {(data) => <OverviewContent data={data} />}
+      </AsyncContent>
+
+      <SystemStatusCard state={status.state} checkedAt={status.lastSuccessAt} />
+    </div>
   )
 }
 
 function OverviewContent({ data }: { data: DashboardOverview }) {
-  const { summary, todaysAppointments, recentActivity } = data
+  const { summary, trends, demographics, todaysAppointments, recentActivity } = data
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-medium text-slate-600">{formatLongDate(DEMO_NOW)}</p>
-        <DemoBadge />
-      </div>
-
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label="Patients"
+          label="Total patients"
           value={formatNumber(summary.patients.total)}
           icon="users"
           detail={`${summary.patients.active} active · ${summary.patients.pending} pending intake`}
@@ -63,10 +98,10 @@ function OverviewContent({ data }: { data: DashboardOverview }) {
           linkLabel="View directory"
         />
         <StatCard
-          label="Appointments today"
-          value={formatNumber(summary.appointments.today)}
+          label="Upcoming appointments"
+          value={formatNumber(summary.appointments.upcomingWeek)}
           icon="calendar"
-          detail={`${summary.appointments.upcomingWeek} more scheduled in the next 7 days`}
+          detail={`Next 7 days · ${summary.appointments.today} on today’s schedule`}
           href={routeHref('/appointments')}
           linkLabel="View schedule"
         />
@@ -74,10 +109,23 @@ function OverviewContent({ data }: { data: DashboardOverview }) {
           label="HL7 messages (24h)"
           value={formatNumber(summary.integration.hl7Messages24h)}
           icon="activity"
-          detail={`${summary.integration.hl7Failures24h} failed · ${formatNumber(summary.integration.fhirRequests24h)} FHIR requests`}
+          detail={`${summary.integration.hl7Failures24h} rejected · ${formatNumber(summary.integration.fhirRequests24h)} FHIR requests`}
           href={routeHref('/hl7')}
           linkLabel="Integration details"
         />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <AppointmentActivityCard days={trends.appointmentsByDay} className="lg:col-span-2" />
+        <DemographicsCard demographics={demographics} />
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <RegistrationTrendCard
+          months={trends.registrationsByMonth}
+          beforeWindow={trends.registrationsBeforeWindow}
+        />
+        <Hl7ActivityCard hours={trends.hl7ByHour} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
@@ -105,7 +153,7 @@ function OverviewContent({ data }: { data: DashboardOverview }) {
         </Card>
 
         <Card
-          title="Interoperability readiness"
+          title="Integration readiness"
           description="Backend capabilities and their dashboard integration status"
           className="lg:col-span-2"
           bodyClassName="p-0"
@@ -270,8 +318,8 @@ const READINESS: Array<{ icon: IconName; name: string; detail: string; ready: bo
   },
   {
     icon: 'lock',
-    name: 'Dashboard authentication & live data',
-    detail: 'This dashboard currently uses synthetic in-browser data only.',
+    name: 'Dashboard sign-in & live patient data',
+    detail: 'Available in API mode. This session is running on synthetic demo data.',
     ready: false,
   },
 ]
@@ -303,7 +351,7 @@ function IntegrationReadiness() {
             </Badge>
           ) : (
             <Badge tone="warning" dot>
-              Planned
+              Off in demo mode
             </Badge>
           )}
         </li>

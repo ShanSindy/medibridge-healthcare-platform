@@ -1,3 +1,4 @@
+import { DATA_SOURCE } from '../../config/api'
 import { cx, focusRing } from '../../lib/cx'
 import { NAV_SECTIONS, ROUTES, routeHref } from '../../routes'
 import { Icon } from '../ui/Icon'
@@ -15,7 +16,7 @@ export function SidebarNav({ currentPath, onNavigate }: SidebarNavProps) {
       <div className="flex h-16 shrink-0 items-center px-5">
         <a href={routeHref('/')} onClick={onNavigate} className={cx('rounded-md', focusRing)}>
           <BrandLockup />
-          <span className="sr-only"> — go to overview</span>
+          <span className="sr-only"> — go to dashboard</span>
         </a>
       </div>
 
@@ -65,12 +66,21 @@ export function SidebarNav({ currentPath, onNavigate }: SidebarNavProps) {
         ))}
       </nav>
 
-      <div className="m-3 rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900">
-        <p className="font-semibold">Demo environment</p>
-        <p className="mt-0.5 text-amber-800">
-          All records are synthetic. No real patient information is shown or stored.
-        </p>
-      </div>
+      {DATA_SOURCE === 'api' ? (
+        <div className="m-3 rounded-lg border border-brand-200 bg-brand-50/70 p-3 text-xs text-brand-900">
+          <p className="font-semibold">API mode</p>
+          <p className="mt-0.5 text-brand-800">
+            The Dashboard and Patients pages show live data from the MediBridge API. All other pages use synthetic demo data.
+          </p>
+        </div>
+      ) : (
+        <div className="m-3 rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900">
+          <p className="font-semibold">Demo environment</p>
+          <p className="mt-0.5 text-amber-800">
+            All records are synthetic. No real patient information is shown or stored.
+          </p>
+        </div>
+      )}
     </div>
   )
 }

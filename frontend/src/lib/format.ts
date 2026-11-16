@@ -118,3 +118,30 @@ export function matchesSearch(query: string, ...fields: Array<string | null | un
   if (!needle) return true
   return fields.some((field) => field != null && normalizeSearch(field).includes(needle))
 }
+
+const clockFormatter = new Intl.DateTimeFormat(LOCALE, { hour: 'numeric', minute: '2-digit', second: '2-digit' })
+const monthFormatter = new Intl.DateTimeFormat(LOCALE, { month: 'short' })
+const monthYearFormatter = new Intl.DateTimeFormat(LOCALE, { month: 'long', year: 'numeric' })
+const hourFormatter = new Intl.DateTimeFormat(LOCALE, { hour: 'numeric' })
+const dayFormatter = new Intl.DateTimeFormat(LOCALE, { weekday: 'short', day: 'numeric' })
+
+/** Wall-clock time with seconds, e.g. for "last refreshed" stamps. */
+export function formatClock(timestamp: number): string {
+  return clockFormatter.format(new Date(timestamp))
+}
+
+export function formatMonthShort(iso: string): string {
+  return monthFormatter.format(new Date(iso))
+}
+
+export function formatMonthYear(iso: string): string {
+  return monthYearFormatter.format(new Date(iso))
+}
+
+export function formatHour(iso: string): string {
+  return hourFormatter.format(new Date(iso))
+}
+
+export function formatWeekdayDay(iso: string): string {
+  return dayFormatter.format(new Date(iso))
+}
