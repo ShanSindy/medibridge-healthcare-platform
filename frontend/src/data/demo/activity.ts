@@ -77,3 +77,14 @@ export const demoIntegrationMetrics: DashboardSummary['integration'] = {
   hl7Failures24h: 3,
   fhirRequests24h: 1186,
 }
+
+/**
+ * Synthetic HL7 v2 message volume by hour of day (index 0 = midnight).
+ * Sums to `demoIntegrationMetrics.hl7Messages24h`.
+ */
+export const demoHl7VolumeByHourOfDay: number[] = [
+  1, 1, 1, 1, 1, 2, 4, 7, 10, 14, 13, 9, 8, 12, 13, 9, 8, 7, 6, 5, 4, 3, 2, 1,
+]
+
+/** How many hours ago each synthetic rejected message arrived. */
+export const demoHl7RejectedHoursAgo: number[] = [1, 6, 11]

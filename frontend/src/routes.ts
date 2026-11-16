@@ -10,7 +10,7 @@ export type RouteId =
   | 'audit'
   | 'settings'
 
-export type NavSection = 'Workspace' | 'Clinical' | 'Interoperability' | 'Administration'
+export type NavSection = 'Workspace' | 'Clinical' | 'Integrations' | 'Administration'
 
 export interface AppRoute {
   id: RouteId
@@ -22,14 +22,14 @@ export interface AppRoute {
   section: NavSection
 }
 
-export const NAV_SECTIONS: NavSection[] = ['Workspace', 'Clinical', 'Interoperability', 'Administration']
+export const NAV_SECTIONS: NavSection[] = ['Workspace', 'Clinical', 'Integrations', 'Administration']
 
 export const ROUTES: AppRoute[] = [
   {
     id: 'overview',
     path: '/',
-    label: 'Overview',
-    title: 'Overview',
+    label: 'Dashboard',
+    title: 'Dashboard',
     description: 'Operational snapshot of patients, providers, scheduling and integrations.',
     icon: 'dashboard',
     section: 'Workspace',
@@ -39,7 +39,7 @@ export const ROUTES: AppRoute[] = [
     path: '/patients',
     label: 'Patients',
     title: 'Patients',
-    description: 'Search and review registered patients and their care status.',
+    description: 'Search and review registered patient records.',
     icon: 'users',
     section: 'Clinical',
   },
@@ -68,7 +68,7 @@ export const ROUTES: AppRoute[] = [
     title: 'FHIR Explorer',
     description: 'Browse MediBridge data as HL7® FHIR® R4 resources.',
     icon: 'braces',
-    section: 'Interoperability',
+    section: 'Integrations',
   },
   {
     id: 'hl7',
@@ -77,7 +77,7 @@ export const ROUTES: AppRoute[] = [
     title: 'HL7 v2 integration',
     description: 'Inbound HL7 v2 ADT message processing and acknowledgements.',
     icon: 'arrows',
-    section: 'Interoperability',
+    section: 'Integrations',
   },
   {
     id: 'audit',

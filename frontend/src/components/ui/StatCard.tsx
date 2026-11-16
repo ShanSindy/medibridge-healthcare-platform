@@ -14,10 +14,10 @@ interface StatCardProps {
 /** A single headline metric. Deliberately a number, not a chart. */
 export function StatCard({ label, value, icon, detail, href, linkLabel }: StatCardProps) {
   return (
-    <div className="flex flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+    <div className="flex h-full flex-col rounded-xl border border-slate-200/80 bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition-shadow hover:shadow-[0_4px_12px_rgba(16,24,40,0.08)]">
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm font-medium text-slate-500">{label}</p>
-        <span className="flex size-9 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-700">
           <Icon name={icon} className="size-[18px]" />
         </span>
       </div>
@@ -26,7 +26,7 @@ export function StatCard({ label, value, icon, detail, href, linkLabel }: StatCa
       {href && linkLabel && (
         <a
           href={href}
-          className="mt-4 inline-flex items-center gap-1 self-start rounded text-sm font-medium text-brand-700 hover:text-brand-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+          className="mt-auto inline-flex items-center gap-1 self-start pt-4 rounded text-sm font-medium text-brand-700 hover:text-brand-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
         >
           {linkLabel}
           <Icon name="chevronRight" className="size-4" />

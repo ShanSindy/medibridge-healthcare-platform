@@ -101,9 +101,23 @@ interface TextFieldProps {
   required?: boolean
   error?: string
   maxLength?: number
+  type?: 'text' | 'password'
+  autoComplete?: string
+  disabled?: boolean
 }
 
-export function TextField({ label, value, onChange, hint, required, error, maxLength }: TextFieldProps) {
+export function TextField({
+  label,
+  value,
+  onChange,
+  hint,
+  required,
+  error,
+  maxLength,
+  type = 'text',
+  autoComplete,
+  disabled,
+}: TextFieldProps) {
   const id = useId()
   const describedBy = [hint && `${id}-hint`, error && `${id}-error`].filter(Boolean).join(' ') || undefined
   return (
@@ -119,10 +133,12 @@ export function TextField({ label, value, onChange, hint, required, error, maxLe
       </label>
       <input
         id={id}
-        type="text"
+        type={type}
         value={value}
         required={required}
         maxLength={maxLength}
+        autoComplete={autoComplete}
+        disabled={disabled}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy}
         onChange={(event) => onChange(event.target.value)}
