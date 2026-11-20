@@ -1,4 +1,3 @@
-
 import pytest
 from fastapi import HTTPException
 
@@ -78,9 +77,7 @@ def test_viewer_cannot_read_patients():
 def test_only_admin_can_manage_users():
     checker = require_permission("users:manage")
 
-    assert checker(
-        current_user=make_user("admin")
-    )["role"] == "admin"
+    assert checker(current_user=make_user("admin"))["role"] == "admin"
 
     with pytest.raises(HTTPException) as exc:
         checker(current_user=make_user("scheduler"))
@@ -103,6 +100,7 @@ def test_permission_configuration():
         "admin",
         "scheduler",
     )
+
 
 import pytest
 

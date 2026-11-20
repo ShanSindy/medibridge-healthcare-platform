@@ -1,4 +1,3 @@
-
 import json
 
 import pytest
@@ -104,9 +103,7 @@ def test_log_audit_event_rejects_invalid_outcome(
     invalid_outcome,
 ):
     def unexpected_connection():
-        raise AssertionError(
-            "Database should not be accessed"
-        )
+        raise AssertionError("Database should not be accessed")
 
     monkeypatch.setattr(
         audit,
@@ -121,13 +118,12 @@ def test_log_audit_event_rejects_invalid_outcome(
             outcome=invalid_outcome,
         )
 
+
 def test_log_audit_event_uses_existing_transaction(monkeypatch):
     fake_connection = FakeConnection()
 
     def unexpected_connection():
-        raise AssertionError(
-            "Audit logger should reuse the provided connection"
-        )
+        raise AssertionError("Audit logger should reuse the provided connection")
 
     monkeypatch.setattr(
         audit,

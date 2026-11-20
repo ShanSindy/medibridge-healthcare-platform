@@ -1,4 +1,3 @@
-
 from fastapi.testclient import TestClient
 from psycopg.errors import ExclusionViolation
 import main
@@ -68,6 +67,7 @@ def test_list_appointments_returns_appointments(monkeypatch):
     assert data[0]["provider_id"] == 1
     assert data[0]["status"] == "scheduled"
 
+
 def test_create_appointment_returns_201(monkeypatch):
     def fake_create_appointment(appointment):
         return {
@@ -121,9 +121,7 @@ def test_create_appointment_conflict_returns_409(monkeypatch):
             return FakeDiagnostic()
 
     def fake_create_appointment(appointment):
-        raise FakeExclusionViolation(
-            "conflicting key value violates exclusion constraint"
-        )
+        raise FakeExclusionViolation("conflicting key value violates exclusion constraint")
 
     monkeypatch.setattr(
         main,
@@ -147,11 +145,9 @@ def test_create_appointment_conflict_returns_409(monkeypatch):
     assert response.status_code == 409
 
     assert response.json() == {
-        "detail": (
-            "This provider already has a scheduled "
-            "appointment during the requested time."
-        )
+        "detail": ("This provider already has a scheduled appointment during the requested time.")
     }
+
 
 def test_update_appointment_conflict_returns_409(monkeypatch):
     class FakeExclusionViolation(ExclusionViolation):
@@ -163,9 +159,7 @@ def test_update_appointment_conflict_returns_409(monkeypatch):
             return FakeDiagnostic()
 
     def fake_update_appointment(appointment_id, appointment):
-        raise FakeExclusionViolation(
-            "conflicting key value violates exclusion constraint"
-        )
+        raise FakeExclusionViolation("conflicting key value violates exclusion constraint")
 
     monkeypatch.setattr(
         main,
@@ -188,11 +182,9 @@ def test_update_appointment_conflict_returns_409(monkeypatch):
     assert response.status_code == 409
 
     assert response.json() == {
-        "detail": (
-            "This provider already has a scheduled "
-            "appointment during the requested time."
-        )
+        "detail": ("This provider already has a scheduled appointment during the requested time.")
     }
+
 
 def test_cancel_appointment_returns_cancelled_status(monkeypatch):
     def fake_cancel_appointment(appointment_id):
@@ -226,11 +218,10 @@ def test_cancel_appointment_returns_cancelled_status(monkeypatch):
     assert data["provider_id"] == 1
     assert data["status"] == "cancelled"
 
+
 def test_create_appointment_rejects_invalid_time(monkeypatch):
     def fake_create_appointment(appointment):
-        raise AssertionError(
-            "Database service should not be called for invalid input"
-        )
+        raise AssertionError("Database service should not be called for invalid input")
 
     monkeypatch.setattr(
         main,
@@ -257,10 +248,9 @@ def test_create_appointment_rejects_invalid_time(monkeypatch):
 
     assert "detail" in data
     assert any(
-        "Appointment end time must be after start time"
-        in error["msg"]
-        for error in data["detail"]
+        "Appointment end time must be after start time" in error["msg"] for error in data["detail"]
     )
+
 
 def test_get_appointment_not_found_returns_404(monkeypatch):
     def fake_get_appointment_by_id(appointment_id):
@@ -277,6 +267,4 @@ def test_get_appointment_not_found_returns_404(monkeypatch):
 
     assert response.status_code == 404
 
-    assert response.json() == {
-        "detail": "Appointment not found"
-    }
+    assert response.json() == {"detail": "Appointment not found"}

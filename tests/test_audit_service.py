@@ -1,4 +1,3 @@
-
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,14 +47,10 @@ def test_get_audit_logs_returns_records():
     ]
 
     mock_connection = MagicMock()
-    mock_connection.cursor.return_value.__enter__.return_value = (
-        mock_cursor
-    )
+    mock_connection.cursor.return_value.__enter__.return_value = mock_cursor
 
     with patch("audit_service.get_connection") as mock_get_connection:
-        mock_get_connection.return_value.__enter__.return_value = (
-            mock_connection
-        )
+        mock_get_connection.return_value.__enter__.return_value = mock_connection
 
         result = get_audit_logs(limit=10, offset=0)
 

@@ -1,4 +1,3 @@
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -55,6 +54,7 @@ def test_fhir_metadata_is_public():
 
     assert response.status_code == 200
     assert response.json()["resourceType"] == "CapabilityStatement"
+
 
 def test_clinician_can_read_fhir_patient(monkeypatch):
     main.app.dependency_overrides[get_current_user] = lambda: {
@@ -115,6 +115,7 @@ def test_clinician_can_read_fhir_patient(monkeypatch):
     assert data["resourceType"] == "Patient"
     assert data["id"] == "1"
 
+
 def test_scheduler_can_search_fhir_patients(monkeypatch):
     main.app.dependency_overrides[get_current_user] = lambda: {
         "id": 3,
@@ -138,9 +139,7 @@ def test_scheduler_can_search_fhir_patients(monkeypatch):
             self.query_count += 1
 
         def fetchall(self):
-            return [
-                (1, "Emily", "Carter", "1990-05-12", "female")
-            ]
+            return [(1, "Emily", "Carter", "1990-05-12", "female")]
 
         def fetchone(self):
             return (1,)

@@ -1,10 +1,8 @@
-
 from uuid import uuid4
 from database import get_connection
 from hl7_service import register_patient_from_hl7, update_patient_from_hl7, HL7_MRN_SYSTEM
 import pytest
 from unittest.mock import patch
-
 
 
 def test_register_patient_from_hl7():
@@ -39,7 +37,7 @@ def test_register_patient_from_hl7():
                         ON pi.patient_id = p.id
                     WHERE p.id = %s
                     """,
-                    (patient_id,)
+                    (patient_id,),
                 )
 
                 row = cur.fetchone()
@@ -56,10 +54,7 @@ def test_register_patient_from_hl7():
         if patient_id is not None:
             with get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "DELETE FROM patients WHERE id = %s",
-                        (patient_id,)
-                    )
+                    cur.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
 
         # Remove the HL7 tracking record.
         with get_connection() as conn:
@@ -71,13 +66,8 @@ def test_register_patient_from_hl7():
                       AND sending_facility = %s
                       AND message_control_id = %s
                     """,
-                    (
-                        "REGISTRATION",
-                        "HOSPITAL",
-                        control_id
-                    )
+                    ("REGISTRATION", "HOSPITAL", control_id),
                 )
-
 
 
 def test_register_patient_from_hl7_duplicate_mrn():
@@ -104,10 +94,7 @@ def test_register_patient_from_hl7_duplicate_mrn():
 
         # Second message has a different control ID,
         # but references the same patient MRN.
-        second_message = message.replace(
-            first_control_id,
-            second_control_id
-        )
+        second_message = message.replace(first_control_id, second_control_id)
 
         second_result = register_patient_from_hl7(second_message)
 
@@ -124,7 +111,7 @@ def test_register_patient_from_hl7_duplicate_mrn():
                     FROM patient_identifiers
                     WHERE system = %s AND value = %s
                     """,
-                    (HL7_MRN_SYSTEM, mrn)
+                    (HL7_MRN_SYSTEM, mrn),
                 )
 
                 count = cur.fetchone()[0]
@@ -136,10 +123,7 @@ def test_register_patient_from_hl7_duplicate_mrn():
         if patient_id is not None:
             with get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "DELETE FROM patients WHERE id = %s",
-                        (patient_id,)
-                    )
+                    cur.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
 
         # Clean up both HL7 message tracking records.
         with get_connection() as conn:
@@ -151,12 +135,7 @@ def test_register_patient_from_hl7_duplicate_mrn():
                       AND sending_facility = %s
                       AND message_control_id IN (%s, %s)
                     """,
-                    (
-                        "REGISTRATION",
-                        "HOSPITAL",
-                        first_control_id,
-                        second_control_id
-                    )
+                    ("REGISTRATION", "HOSPITAL", first_control_id, second_control_id),
                 )
 
 
@@ -187,7 +166,7 @@ def test_register_patient_from_hl7_transaction_rollback():
                 FROM patient_identifiers
                 WHERE value = %s
                 """,
-                (mrn,)
+                (mrn,),
             )
             identifier_count = cur.fetchone()[0]
 
@@ -198,7 +177,7 @@ def test_register_patient_from_hl7_transaction_rollback():
                 WHERE first_name = %s
                   AND last_name = %s
                 """,
-                ("Jordan", unique_last_name)
+                ("Jordan", unique_last_name),
             )
             patient_count = cur.fetchone()[0]
 
@@ -215,10 +194,7 @@ def test_register_patient_rejects_a08():
         "Taylor^Jordan||19950722|F"
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"Patient registration requires an ADT\^A04 message\."
-    ):
+    with pytest.raises(ValueError, match=r"Patient registration requires an ADT\^A04 message\."):
         register_patient_from_hl7(message)
 
 
@@ -239,7 +215,7 @@ def test_update_patient_from_hl7():
                     VALUES (%s, %s, %s, %s)
                     RETURNING id
                     """,
-                    ("Jordan", "Taylor", "1995-07-22", "female")
+                    ("Jordan", "Taylor", "1995-07-22", "female"),
                 )
 
                 patient_id = cur.fetchone()[0]
@@ -250,7 +226,7 @@ def test_update_patient_from_hl7():
                         (patient_id, system, value)
                     VALUES (%s, %s, %s)
                     """,
-                    (patient_id, HL7_MRN_SYSTEM, mrn)
+                    (patient_id, HL7_MRN_SYSTEM, mrn),
                 )
 
         # Send an ADT^A08 message.
@@ -277,7 +253,7 @@ def test_update_patient_from_hl7():
                     FROM patients
                     WHERE id = %s
                     """,
-                    (patient_id,)
+                    (patient_id,),
                 )
 
                 updated_patient = cur.fetchone()
@@ -288,14 +264,12 @@ def test_update_patient_from_hl7():
                     FROM patient_identifiers
                     WHERE system = %s AND value = %s
                     """,
-                    (HL7_MRN_SYSTEM, mrn)
+                    (HL7_MRN_SYSTEM, mrn),
                 )
 
                 identifier_count = cur.fetchone()[0]
 
-        assert updated_patient == (
-            "Jordan", "Taylor", "male"
-        )
+        assert updated_patient == ("Jordan", "Taylor", "male")
         assert identifier_count == 1
 
     finally:
@@ -303,10 +277,7 @@ def test_update_patient_from_hl7():
         with get_connection() as conn:
             with conn.cursor() as cur:
                 if patient_id is not None:
-                    cur.execute(
-                        "DELETE FROM patients WHERE id = %s",
-                        (patient_id,)
-                    )
+                    cur.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
 
                 cur.execute(
                     """
@@ -315,11 +286,7 @@ def test_update_patient_from_hl7():
                       AND sending_facility = %s
                       AND message_control_id = %s
                     """,
-                    (
-                        "REGISTRATION",
-                        "HOSPITAL",
-                        control_id
-                    )
+                    ("REGISTRATION", "HOSPITAL", control_id),
                 )
 
 
@@ -342,14 +309,11 @@ def test_update_patient_from_hl7_unknown_mrn():
                 FROM patient_identifiers
                 WHERE system = %s AND value = %s
                 """,
-                (HL7_MRN_SYSTEM, mrn)
+                (HL7_MRN_SYSTEM, mrn),
             )
             assert cur.fetchone()[0] == 0
 
-    with pytest.raises(
-        ValueError,
-        match="Cannot update patient: MRN not found."
-    ):
+    with pytest.raises(ValueError, match="Cannot update patient: MRN not found."):
         update_patient_from_hl7(message)
 
     with get_connection() as conn:
@@ -360,9 +324,10 @@ def test_update_patient_from_hl7_unknown_mrn():
                 FROM patient_identifiers
                 WHERE system = %s AND value = %s
                 """,
-                (HL7_MRN_SYSTEM, mrn)
+                (HL7_MRN_SYSTEM, mrn),
             )
             assert cur.fetchone()[0] == 0
+
 
 def test_update_patient_rejects_a04():
     message = (
@@ -373,11 +338,9 @@ def test_update_patient_rejects_a04():
         "Taylor^Jordan||19950722|F"
     )
 
-    with pytest.raises(
-        ValueError,
-        match=r"Patient updates require an ADT\^A08 message\."
-    ):
+    with pytest.raises(ValueError, match=r"Patient updates require an ADT\^A08 message\."):
         update_patient_from_hl7(message)
+
 
 def test_register_patient_from_hl7_duplicate_message():
     unique_id = uuid4().hex
@@ -447,6 +410,7 @@ def test_register_patient_from_hl7_duplicate_message():
                     ),
                 )
 
+
 def test_update_patient_from_hl7_duplicate_message():
     unique_id = uuid4().hex
     mrn = f"MRN-A08-DUP-{unique_id}"
@@ -471,7 +435,7 @@ def test_update_patient_from_hl7_duplicate_message():
                     VALUES (%s, %s, %s, %s)
                     RETURNING id
                     """,
-                    ("Jordan", "Taylor", "1995-07-22", "female")
+                    ("Jordan", "Taylor", "1995-07-22", "female"),
                 )
                 patient_id = cur.fetchone()[0]
 
@@ -481,7 +445,7 @@ def test_update_patient_from_hl7_duplicate_message():
                         (patient_id, system, value)
                     VALUES (%s, %s, %s)
                     """,
-                    (patient_id, HL7_MRN_SYSTEM, mrn)
+                    (patient_id, HL7_MRN_SYSTEM, mrn),
                 )
 
         # Process the same A08 message twice.
@@ -503,7 +467,7 @@ def test_update_patient_from_hl7_duplicate_message():
                     FROM patients
                     WHERE id = %s
                     """,
-                    (patient_id,)
+                    (patient_id,),
                 )
                 assert cur.fetchone()[0] == "male"
 
@@ -516,7 +480,7 @@ def test_update_patient_from_hl7_duplicate_message():
                       AND sending_facility = %s
                       AND message_control_id = %s
                     """,
-                    ("REGISTRATION", "HOSPITAL", control_id)
+                    ("REGISTRATION", "HOSPITAL", control_id),
                 )
                 assert cur.fetchone()[0] == 1
 
@@ -525,10 +489,7 @@ def test_update_patient_from_hl7_duplicate_message():
         with get_connection() as conn:
             with conn.cursor() as cur:
                 if patient_id is not None:
-                    cur.execute(
-                        "DELETE FROM patients WHERE id = %s",
-                        (patient_id,)
-                    )
+                    cur.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
 
                 cur.execute(
                     """
@@ -537,8 +498,9 @@ def test_update_patient_from_hl7_duplicate_message():
                       AND sending_facility = %s
                       AND message_control_id = %s
                     """,
-                    ("REGISTRATION", "HOSPITAL", control_id)
+                    ("REGISTRATION", "HOSPITAL", control_id),
                 )
+
 
 def test_update_patient_from_hl7_tracking_rollback():
     unique_id = uuid4().hex
@@ -553,10 +515,7 @@ def test_update_patient_from_hl7_tracking_rollback():
     )
 
     # Updating an unknown MRN must fail.
-    with pytest.raises(
-        ValueError,
-        match="Cannot update patient: MRN not found."
-    ):
+    with pytest.raises(ValueError, match="Cannot update patient: MRN not found."):
         update_patient_from_hl7(message)
 
     # The failed transaction must not retain the message.
@@ -570,7 +529,7 @@ def test_update_patient_from_hl7_tracking_rollback():
                   AND sending_facility = %s
                   AND message_control_id = %s
                 """,
-                ("REGISTRATION", "HOSPITAL", control_id)
+                ("REGISTRATION", "HOSPITAL", control_id),
             )
 
             message_count = cur.fetchone()[0]

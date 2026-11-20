@@ -1,11 +1,6 @@
-
-
-
 from datetime import date, datetime
 from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
-
-
 
 
 class Patient(BaseModel):
@@ -39,6 +34,7 @@ class PatientCreate(BaseModel):
             raise ValueError("Date of birth cannot be in the future")
 
         return value
+
 
 from pydantic import EmailStr, Field, field_validator
 from typing import Optional
@@ -83,6 +79,7 @@ class Provider(ProviderCreate):
     id: int
     created_at: datetime
 
+
 class AppointmentCreate(BaseModel):
     patient_id: int = Field(gt=0)
     provider_id: int = Field(gt=0)
@@ -92,18 +89,11 @@ class AppointmentCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_appointment_times(self):
-        if (
-            self.starts_at.utcoffset() is None
-            or self.ends_at.utcoffset() is None
-        ):
-            raise ValueError(
-                "Appointment timestamps must include a timezone."
-            )
+        if self.starts_at.utcoffset() is None or self.ends_at.utcoffset() is None:
+            raise ValueError("Appointment timestamps must include a timezone.")
 
         if self.ends_at <= self.starts_at:
-            raise ValueError(
-                "Appointment end time must be after start time."
-            )
+            raise ValueError("Appointment end time must be after start time.")
 
         return self
 
@@ -113,6 +103,7 @@ class Appointment(AppointmentCreate):
     status: Literal["scheduled", "completed", "cancelled"]
     created_at: datetime
 
+
 class AppointmentUpdate(BaseModel):
     starts_at: datetime
     ends_at: datetime
@@ -121,17 +112,10 @@ class AppointmentUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_appointment_times(self):
-        if (
-            self.starts_at.utcoffset() is None
-            or self.ends_at.utcoffset() is None
-        ):
-            raise ValueError(
-                "Appointment timestamps must include a timezone."
-            )
+        if self.starts_at.utcoffset() is None or self.ends_at.utcoffset() is None:
+            raise ValueError("Appointment timestamps must include a timezone.")
 
         if self.ends_at <= self.starts_at:
-            raise ValueError(
-                "Appointment end time must be after start time."
-            )
+            raise ValueError("Appointment end time must be after start time.")
 
         return self

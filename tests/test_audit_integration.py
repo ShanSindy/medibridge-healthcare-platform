@@ -1,4 +1,3 @@
-
 import pytest
 
 from audit import log_audit_event
@@ -9,12 +8,11 @@ from tests.db_safety import is_session_database
 def test_audit_event_persists_in_postgresql():
     with get_connection() as conn:
         if not is_session_database(conn.info.dbname):
-            raise RuntimeError(
-                "Integration tests must use the disposable test database."
-            )
+            raise RuntimeError("Integration tests must use the disposable test database.")
 
         # Use a unique identifier without patient information.
         import uuid
+
         resource_id = str(uuid.uuid4())
 
         try:
@@ -50,6 +48,7 @@ def test_audit_event_persists_in_postgresql():
             # Roll back all test changes, including the audit event.
             conn.rollback()
 
+
 def test_audit_event_rolls_back_in_postgresql():
     import uuid
 
@@ -57,9 +56,7 @@ def test_audit_event_rolls_back_in_postgresql():
 
     with get_connection() as conn:
         if not is_session_database(conn.info.dbname):
-            raise RuntimeError(
-                "Integration tests must use the disposable test database."
-            )
+            raise RuntimeError("Integration tests must use the disposable test database.")
 
         log_audit_event(
             action="test.audit.rollback",
@@ -88,9 +85,7 @@ def test_audit_event_rolls_back_in_postgresql():
     # Open a new connection to verify the event was not saved.
     with get_connection() as verification_conn:
         if not is_session_database(verification_conn.info.dbname):
-            raise RuntimeError(
-                "Verification must use the disposable test database."
-            )
+            raise RuntimeError("Verification must use the disposable test database.")
 
         with verification_conn.cursor() as cursor:
             cursor.execute(
@@ -104,6 +99,7 @@ def test_audit_event_rolls_back_in_postgresql():
 
             assert cursor.fetchone()[0] == 0
 
+
 def test_committed_audit_event_persists_in_postgresql():
     import uuid
 
@@ -111,9 +107,7 @@ def test_committed_audit_event_persists_in_postgresql():
 
     with get_connection() as conn:
         if not is_session_database(conn.info.dbname):
-            raise RuntimeError(
-                "Integration tests must use the disposable test database."
-            )
+            raise RuntimeError("Integration tests must use the disposable test database.")
 
         try:
             log_audit_event(
@@ -130,9 +124,7 @@ def test_committed_audit_event_persists_in_postgresql():
             # Verify persistence using a separate connection.
             with get_connection() as verification_conn:
                 if not is_session_database(verification_conn.info.dbname):
-                    raise RuntimeError(
-                        "Verification must use the disposable test database."
-                    )
+                    raise RuntimeError("Verification must use the disposable test database.")
 
                 with verification_conn.cursor() as cursor:
                     cursor.execute(
@@ -156,9 +148,7 @@ def test_committed_audit_event_persists_in_postgresql():
             # Remove only this test's audit event.
             with get_connection() as cleanup_conn:
                 if not is_session_database(cleanup_conn.info.dbname):
-                    raise RuntimeError(
-                        "Cleanup must use the disposable test database."
-                    )
+                    raise RuntimeError("Cleanup must use the disposable test database.")
 
                 with cleanup_conn.cursor() as cursor:
                     cursor.execute(
@@ -175,6 +165,7 @@ def test_committed_audit_event_persists_in_postgresql():
                         ),
                     )
 
+
 def test_patient_creation_and_audit_roll_back_together():
     import uuid
 
@@ -182,9 +173,7 @@ def test_patient_creation_and_audit_roll_back_together():
 
     with get_connection() as conn:
         if not is_session_database(conn.info.dbname):
-            raise RuntimeError(
-                "Integration tests must use the disposable test database."
-            )
+            raise RuntimeError("Integration tests must use the disposable test database.")
 
         with conn.cursor() as cursor:
             cursor.execute(
@@ -241,9 +230,7 @@ def test_patient_creation_and_audit_roll_back_together():
 
     with get_connection() as verification_conn:
         if not is_session_database(verification_conn.info.dbname):
-            raise RuntimeError(
-                "Verification must use the disposable test database."
-            )
+            raise RuntimeError("Verification must use the disposable test database.")
 
         with verification_conn.cursor() as cursor:
             cursor.execute(
@@ -264,6 +251,7 @@ def test_patient_creation_and_audit_roll_back_together():
             )
             assert cursor.fetchone()[0] == 0
 
+
 def test_patient_creation_rolls_back_after_real_audit_failure():
     import uuid
 
@@ -273,9 +261,7 @@ def test_patient_creation_rolls_back_after_real_audit_failure():
     with pytest.raises(ValueError, match="Audit outcome"):
         with get_connection() as conn:
             if not is_session_database(conn.info.dbname):
-                raise RuntimeError(
-                    "Integration tests must use the disposable test database."
-                )
+                raise RuntimeError("Integration tests must use the disposable test database.")
 
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -314,9 +300,7 @@ def test_patient_creation_rolls_back_after_real_audit_failure():
     # The connection context should have rolled back the patient insert.
     with get_connection() as verification_conn:
         if not is_session_database(verification_conn.info.dbname):
-            raise RuntimeError(
-                "Verification must use the disposable test database."
-            )
+            raise RuntimeError("Verification must use the disposable test database.")
 
         with verification_conn.cursor() as cursor:
             cursor.execute(
@@ -325,6 +309,7 @@ def test_patient_creation_rolls_back_after_real_audit_failure():
             )
 
             assert cursor.fetchone()[0] == 0
+
 
 def test_patient_creation_rolls_back_on_audit_constraint_violation():
     import uuid
@@ -336,9 +321,7 @@ def test_patient_creation_rolls_back_on_audit_constraint_violation():
     with pytest.raises(psycopg.errors.CheckViolation):
         with get_connection() as conn:
             if not is_session_database(conn.info.dbname):
-                raise RuntimeError(
-                    "Integration tests must use the disposable test database."
-                )
+                raise RuntimeError("Integration tests must use the disposable test database.")
 
             with conn.cursor() as cursor:
                 cursor.execute(
@@ -389,9 +372,7 @@ def test_patient_creation_rolls_back_on_audit_constraint_violation():
     # The failed audit INSERT must roll back the patient INSERT.
     with get_connection() as verification_conn:
         if not is_session_database(verification_conn.info.dbname):
-            raise RuntimeError(
-                "Verification must use the disposable test database."
-            )
+            raise RuntimeError("Verification must use the disposable test database.")
 
         with verification_conn.cursor() as cursor:
             cursor.execute(

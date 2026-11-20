@@ -21,18 +21,14 @@ def test_fhir_metadata_advertises_patient_and_practitioner():
 
     assert response.status_code == 200
 
-    resources = {
-        resource["type"]: resource
-        for resource in response.json()["rest"][0]["resource"]
-    }
+    resources = {resource["type"]: resource for resource in response.json()["rest"][0]["resource"]}
 
     assert "Patient" in resources
     assert "Practitioner" in resources
 
     for resource_type in ("Patient", "Practitioner"):
         interactions = {
-            interaction["code"]
-            for interaction in resources[resource_type]["interaction"]
+            interaction["code"] for interaction in resources[resource_type]["interaction"]
         }
 
         assert {"read", "search-type"} <= interactions
@@ -43,20 +39,11 @@ def test_fhir_metadata_advertises_search_parameters():
 
     assert response.status_code == 200
 
-    resources = {
-        resource["type"]: resource
-        for resource in response.json()["rest"][0]["resource"]
-    }
+    resources = {resource["type"]: resource for resource in response.json()["rest"][0]["resource"]}
 
-    patient_params = {
-        param["name"]
-        for param in resources["Patient"]["searchParam"]
-    }
+    patient_params = {param["name"] for param in resources["Patient"]["searchParam"]}
 
-    practitioner_params = {
-        param["name"]
-        for param in resources["Practitioner"]["searchParam"]
-    }
+    practitioner_params = {param["name"] for param in resources["Practitioner"]["searchParam"]}
 
     assert {"family", "given", "identifier"} <= patient_params
     assert {"family", "given"} <= practitioner_params
@@ -71,23 +58,15 @@ def test_fhir_metadata_advertises_practitioner_role():
 
     assert response.status_code == 200
 
-    resources = {
-        resource["type"]: resource
-        for resource in response.json()["rest"][0]["resource"]
-    }
+    resources = {resource["type"]: resource for resource in response.json()["rest"][0]["resource"]}
 
     assert "PractitionerRole" in resources
 
     role = resources["PractitionerRole"]
 
-    assert role["profile"] == (
-        "http://hl7.org/fhir/StructureDefinition/PractitionerRole"
-    )
+    assert role["profile"] == ("http://hl7.org/fhir/StructureDefinition/PractitionerRole")
 
-    interactions = {
-        interaction["code"]
-        for interaction in role["interaction"]
-    }
+    interactions = {interaction["code"] for interaction in role["interaction"]}
 
     assert {"read", "search-type"} <= interactions
 
@@ -97,20 +76,11 @@ def test_fhir_metadata_advertises_practitioner_role_specialty_search():
 
     assert response.status_code == 200
 
-    resources = {
-        resource["type"]: resource
-        for resource in response.json()["rest"][0]["resource"]
-    }
+    resources = {resource["type"]: resource for resource in response.json()["rest"][0]["resource"]}
 
-    search_params = {
-        param["name"]: param
-        for param in resources["PractitionerRole"]["searchParam"]
-    }
+    search_params = {param["name"]: param for param in resources["PractitionerRole"]["searchParam"]}
 
     assert "specialty" in search_params
     assert search_params["specialty"]["type"] == "token"
     assert "prefix" in search_params["specialty"]["documentation"]
-    assert "not yet implemented" in (
-        search_params["specialty"]["documentation"]
-    )
-
+    assert "not yet implemented" in (search_params["specialty"]["documentation"])

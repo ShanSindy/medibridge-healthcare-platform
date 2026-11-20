@@ -1,4 +1,3 @@
-
 import json
 
 from database import get_connection
@@ -24,9 +23,7 @@ def log_audit_event(
     """
 
     if outcome not in ("success", "failure"):
-        raise ValueError(
-            "Audit outcome must be 'success' or 'failure'."
-        )
+        raise ValueError("Audit outcome must be 'success' or 'failure'.")
 
     def insert_event(conn):
         with conn.cursor() as cursor:

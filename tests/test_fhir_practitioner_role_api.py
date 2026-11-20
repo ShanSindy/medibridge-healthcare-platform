@@ -22,9 +22,7 @@ def make_user(role):
     "role",
     ["admin", "clinician", "scheduler", "viewer"],
 )
-def test_authorized_role_can_read_fhir_practitioner_role(
-    monkeypatch, role
-):
+def test_authorized_role_can_read_fhir_practitioner_role(monkeypatch, role):
     monkeypatch.setattr(
         "auth_dependencies.get_user_by_id",
         lambda user_id: make_user(role),
@@ -50,9 +48,7 @@ def test_authorized_role_can_read_fhir_practitioner_role(
     )
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == (
-        "application/fhir+json"
-    )
+    assert response.headers["content-type"] == ("application/fhir+json")
 
     resource = response.json()
     assert resource["resourceType"] == "PractitionerRole"
@@ -81,9 +77,7 @@ def test_missing_fhir_practitioner_role_returns_operation_outcome(
     )
 
     assert response.status_code == 404
-    assert response.headers["content-type"] == (
-        "application/fhir+json"
-    )
+    assert response.headers["content-type"] == ("application/fhir+json")
     assert response.json()["resourceType"] == "OperationOutcome"
     assert response.json()["issue"][0]["code"] == "not-found"
 

@@ -21,9 +21,7 @@ def make_user(role):
     "role",
     ["admin", "clinician", "scheduler", "viewer"],
 )
-def test_practitioner_search_returns_fhir_bundle(
-    monkeypatch, role
-):
+def test_practitioner_search_returns_fhir_bundle(monkeypatch, role):
     monkeypatch.setattr(
         "auth_dependencies.get_user_by_id",
         lambda user_id: make_user(role),
@@ -61,9 +59,7 @@ def test_practitioner_search_returns_fhir_bundle(
     )
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == (
-        "application/fhir+json"
-    )
+    assert response.headers["content-type"] == ("application/fhir+json")
 
     bundle = response.json()
     assert bundle["resourceType"] == "Bundle"
@@ -71,17 +67,10 @@ def test_practitioner_search_returns_fhir_bundle(
     assert bundle["total"] == 2
     assert len(bundle["entry"]) == 1
     assert bundle["entry"][0]["resource"]["id"] == "7"
-    assert bundle["entry"][0]["resource"]["resourceType"] == (
-        "Practitioner"
-    )
-    assert bundle["entry"][0]["fullUrl"].endswith(
-        "/fhir/Practitioner/7"
-    )
+    assert bundle["entry"][0]["resource"]["resourceType"] == ("Practitioner")
+    assert bundle["entry"][0]["fullUrl"].endswith("/fhir/Practitioner/7")
 
-    links = {
-        link["relation"]: link["url"]
-        for link in bundle["link"]
-    }
+    links = {link["relation"]: link["url"] for link in bundle["link"]}
     assert "self" in links
     assert "next" in links
     assert "previous" not in links
@@ -107,10 +96,7 @@ def test_practitioner_search_previous_page(monkeypatch):
     )
 
     assert response.status_code == 200
-    links = {
-        link["relation"]: link["url"]
-        for link in response.json()["link"]
-    }
+    links = {link["relation"]: link["url"] for link in response.json()["link"]}
     assert "previous" in links
     assert "_offset=0" in links["previous"]
     assert "next" not in links
@@ -129,9 +115,7 @@ def test_practitioner_search_requires_authentication():
         {"_offset": -1},
     ],
 )
-def test_practitioner_search_invalid_pagination(
-    monkeypatch, params
-):
+def test_practitioner_search_invalid_pagination(monkeypatch, params):
     monkeypatch.setattr(
         "auth_dependencies.get_user_by_id",
         lambda user_id: make_user("admin"),

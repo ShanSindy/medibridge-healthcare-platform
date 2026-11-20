@@ -1,12 +1,9 @@
-
 from datetime import datetime, timezone
 from uuid import uuid4
 
 
 def generate_hl7_ack(
-    original_segments: dict,
-    acknowledgment_code: str = "AA",
-    error_message: str | None = None
+    original_segments: dict, acknowledgment_code: str = "AA", error_message: str | None = None
 ) -> str:
     """
     Generate a basic HL7 v2 acknowledgment message.
@@ -30,11 +27,7 @@ def generate_hl7_ack(
 
     original_control_id = msh[9].strip()
     original_message_type = msh[8].split("^")
-    trigger_event = (
-        original_message_type[1]
-        if len(original_message_type) > 1
-        else ""
-    )
+    trigger_event = original_message_type[1] if len(original_message_type) > 1 else ""
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     ack_control_id = str(uuid4())
@@ -52,11 +45,7 @@ def generate_hl7_ack(
     ack_msa = f"MSA|{acknowledgment_code}|{original_control_id}"
 
     if error_message:
-        safe_error = (
-            error_message.replace("\r", " ")
-            .replace("\n", " ")
-            .replace("|", " ")
-        )
+        safe_error = error_message.replace("\r", " ").replace("\n", " ").replace("|", " ")
         ack_msa += f"|{safe_error}"
 
     return f"{ack_msh}\r{ack_msa}\r"

@@ -1,4 +1,3 @@
-
 import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
@@ -49,9 +48,7 @@ def test_get_current_user_missing_token():
 
 def test_get_current_user_invalid_token():
     with pytest.raises(HTTPException) as exc:
-        get_current_user(
-            make_credentials("invalid-token")
-        )
+        get_current_user(make_credentials("invalid-token"))
 
     assert exc.value.status_code == 401
 
@@ -88,6 +85,7 @@ def test_get_current_user_disabled_account(monkeypatch):
         get_current_user(make_credentials(token))
 
     assert exc.value.status_code == 401
+
 
 def test_get_current_user_rejects_wrong_scheme():
     token = create_access_token(1)

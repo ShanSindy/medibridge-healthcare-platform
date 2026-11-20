@@ -118,7 +118,9 @@ def resolve_settings(
         )
 
     connection_source = file_values if file_values is not None else process_env
-    settings = {key: str(connection_source[key]) for key in CONNECTION_KEYS if connection_source.get(key)}
+    settings = {
+        key: str(connection_source[key]) for key in CONNECTION_KEYS if connection_source.get(key)
+    }
     for key in FLAG_KEYS:
         value = (file_values or {}).get(key) or process_env.get(key)
         if value:
@@ -144,7 +146,9 @@ def validate_settings(settings: Mapping[str, str]) -> TestDatabaseConfig:
 
     allowed_hosts = tuple(
         host.strip().lower()
-        for host in settings.get("TEST_DB_ALLOWED_HOSTS", ",".join(DEFAULT_ALLOWED_HOSTS)).split(",")
+        for host in settings.get("TEST_DB_ALLOWED_HOSTS", ",".join(DEFAULT_ALLOWED_HOSTS)).split(
+            ","
+        )
         if host.strip()
     )
     host = settings["DB_HOST"].strip()
@@ -218,7 +222,9 @@ def is_disposable_name(name: str) -> bool:
 
 def register_session_database(name: str) -> None:
     if not is_disposable_name(name):
-        raise UnsafeTestDatabase("The session database name is not a disposable test database name.")
+        raise UnsafeTestDatabase(
+            "The session database name is not a disposable test database name."
+        )
     _session["database"] = name
 
 
@@ -231,7 +237,9 @@ def is_session_database(name: str) -> bool:
 # --- role and server ----------------------------------------------------------------
 
 
-def check_role(*, is_superuser: bool, can_create_db: bool, in_recovery: bool, allow_superuser: bool) -> None:
+def check_role(
+    *, is_superuser: bool, can_create_db: bool, in_recovery: bool, allow_superuser: bool
+) -> None:
     """Checks the connected role and server before anything is created."""
     if in_recovery:
         raise UnsafeTestDatabase("The test database server is a read-only replica.")
@@ -292,14 +300,18 @@ def check_identity(
     and owner must match and any comment that is present must be the marker.
     """
     if not is_disposable_name(session_name):
-        raise UnsafeTestDatabase("Refusing to touch a database that is not a disposable test database.")
+        raise UnsafeTestDatabase(
+            "Refusing to touch a database that is not a disposable test database."
+        )
     if created is None:
         raise UnsafeTestDatabase(
             "This process could not record the identity of the database it created, "
             "so ownership cannot be established."
         )
     if created.name != session_name:
-        raise UnsafeTestDatabase("The recorded database is not this session's disposable test database.")
+        raise UnsafeTestDatabase(
+            "The recorded database is not this session's disposable test database."
+        )
     if found is None:
         raise UnsafeTestDatabase("This session's disposable test database no longer exists.")
     if found.oid != created.oid:
@@ -340,7 +352,9 @@ def cleanup_targets(tables: Iterable[tuple[str, str]]) -> list[str]:
     supported schema, and there must be at least one application table.
     """
     tables = list(tables)
-    unsupported = sorted(f"{schema}.{table}" for schema, table in tables if schema != SUPPORTED_SCHEMA)
+    unsupported = sorted(
+        f"{schema}.{table}" for schema, table in tables if schema != SUPPORTED_SCHEMA
+    )
     if unsupported:
         raise UnsafeTestDatabase(
             "Tables outside the supported schema would not be cleaned between tests: "

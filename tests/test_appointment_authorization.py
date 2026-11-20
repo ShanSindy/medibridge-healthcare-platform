@@ -1,4 +1,3 @@
-
 import pytest
 
 from fastapi.testclient import TestClient
@@ -63,9 +62,7 @@ def test_viewer_cannot_read_appointments(monkeypatch):
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == (
-        "Insufficient permissions"
-    )
+    assert response.json()["detail"] == ("Insufficient permissions")
 
 
 @pytest.mark.parametrize(
@@ -101,9 +98,7 @@ def test_unauthorized_roles_cannot_modify_appointments(
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == (
-        "Insufficient permissions"
-    )
+    assert response.json()["detail"] == ("Insufficient permissions")
 
 
 @pytest.mark.parametrize(
@@ -132,9 +127,7 @@ def test_appointment_endpoints_require_authentication(
 def test_invalid_token_cannot_read_appointments():
     response = client.get(
         "/appointments",
-        headers={
-            "Authorization": "Bearer invalid-token"
-        },
+        headers={"Authorization": "Bearer invalid-token"},
     )
 
     assert response.status_code == 401

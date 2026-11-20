@@ -1,4 +1,3 @@
-
 from fastapi.testclient import TestClient
 
 from main import app
@@ -19,10 +18,7 @@ def test_complete_login_and_authenticated_request(monkeypatch):
     }
 
     def fake_authenticate(username, password):
-        if (
-            username == "demo_user"
-            and password == "CorrectPassword123!"
-        ):
+        if username == "demo_user" and password == "CorrectPassword123!":
             return test_user
 
         return None

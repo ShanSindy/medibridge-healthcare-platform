@@ -5,9 +5,7 @@ import provider_service
 
 def test_search_providers_pagination(monkeypatch):
     cursor = MagicMock()
-    cursor.fetchall.return_value = [
-        (1, "Jane", "Smith", "Cardiology", None, None, None)
-    ]
+    cursor.fetchall.return_value = [(1, "Jane", "Smith", "Cardiology", None, None, None)]
     cursor.fetchone.return_value = (3,)
 
     connection = MagicMock()

@@ -46,9 +46,11 @@ def test_valid_settings_are_accepted():
 
 @pytest.mark.parametrize("value", [None, "", "development", "production", "TEST"])
 def test_missing_or_wrong_environment_marker_is_rejected(value):
-    settings = {**VALID, "MEDIBRIDGE_ENV": value} if value is not None else {
-        k: v for k, v in VALID.items() if k != "MEDIBRIDGE_ENV"
-    }
+    settings = (
+        {**VALID, "MEDIBRIDGE_ENV": value}
+        if value is not None
+        else {k: v for k, v in VALID.items() if k != "MEDIBRIDGE_ENV"}
+    )
     with pytest.raises(UnsafeTestDatabase, match="MEDIBRIDGE_ENV"):
         validate_settings(settings)
 
@@ -117,7 +119,9 @@ def test_process_environment_is_used_when_there_is_no_test_env_file():
 
 def test_harness_flags_may_come_from_the_shell():
     file_values = {k: v for k, v in VALID.items() if k != "MEDIBRIDGE_ENV"}
-    settings = resolve_settings(file_values, {"MEDIBRIDGE_ENV": "test", "TEST_DB_ALLOWED_HOSTS": "localhost"})
+    settings = resolve_settings(
+        file_values, {"MEDIBRIDGE_ENV": "test", "TEST_DB_ALLOWED_HOSTS": "localhost"}
+    )
     assert validate_settings(settings).host == "localhost"
 
 
@@ -136,7 +140,9 @@ def test_superuser_override_requires_exactly_1():
     assert validate_settings(settings).allow_superuser is False
 
 
-@pytest.mark.parametrize("file_values", [VALID, None], ids=["with-test-env-file", "ci-without-file"])
+@pytest.mark.parametrize(
+    "file_values", [VALID, None], ids=["with-test-env-file", "ci-without-file"]
+)
 def test_superuser_override_from_the_environment_is_rejected(file_values):
     shell = {**VALID, "TEST_DB_ALLOW_SUPERUSER": "1"}
     with pytest.raises(UnsafeTestDatabase, match="only accepted from the local .env.test"):
@@ -193,7 +199,9 @@ def test_apply_environment_disables_dotenv_and_sets_the_marker():
 
 def test_test_env_file_values_are_not_interpolated_from_the_environment(tmp_path, monkeypatch):
     env_file = tmp_path / ".env.test"
-    env_file.write_text("DB_PASSWORD=${SHELL_SECRET}\nDB_USER=tester\nEMPTY_KEY\n", encoding="utf-8")
+    env_file.write_text(
+        "DB_PASSWORD=${SHELL_SECRET}\nDB_USER=tester\nEMPTY_KEY\n", encoding="utf-8"
+    )
     monkeypatch.setenv("SHELL_SECRET", "leaked-from-shell")
 
     values = read_test_env_file(env_file)
@@ -271,7 +279,9 @@ def test_superuser_is_rejected_unless_explicitly_allowed():
 
 def test_role_without_createdb_is_rejected():
     with pytest.raises(UnsafeTestDatabase, match="CREATEDB"):
-        check_role(is_superuser=False, can_create_db=False, in_recovery=False, allow_superuser=False)
+        check_role(
+            is_superuser=False, can_create_db=False, in_recovery=False, allow_superuser=False
+        )
 
 
 def test_replica_is_rejected():
@@ -314,17 +324,36 @@ def test_unmarked_database_passes_only_when_this_process_never_wrote_the_marker(
         ({"session": "medibridge_test"}, "not a disposable"),
         ({"session": "medibridge"}, "not a disposable"),
         ({"created": None}, "ownership cannot be established"),
-        ({"created": CreatedDatabase(name="medibridge_test_ffffffffffffffff", oid=50001, owner_oid=ROLE)},
-         "not this session"),
+        (
+            {
+                "created": CreatedDatabase(
+                    name="medibridge_test_ffffffffffffffff", oid=50001, owner_oid=ROLE
+                )
+            },
+            "not this session",
+        ),
         ({"found": None}, "no longer exists"),
-        ({"found": FoundDatabase(oid=50002, owner_oid=ROLE, comment=OWNERSHIP_MARKER)}, "OID changed"),
+        (
+            {"found": FoundDatabase(oid=50002, owner_oid=ROLE, comment=OWNERSHIP_MARKER)},
+            "OID changed",
+        ),
         ({"found": FoundDatabase(oid=50001, owner_oid=99, comment=OWNERSHIP_MARKER)}, "not owned"),
         ({"role": 99}, "not owned"),
         ({"found": FoundDatabase(oid=50001, owner_oid=ROLE, comment="other")}, "ownership marker"),
-        ({"found": FoundDatabase(oid=50001, owner_oid=ROLE, comment="other"), "require_marker": False},
-         "unexpected comment"),
-        ({"found": FoundDatabase(oid=50002, owner_oid=ROLE, comment=None), "require_marker": False},
-         "OID changed"),
+        (
+            {
+                "found": FoundDatabase(oid=50001, owner_oid=ROLE, comment="other"),
+                "require_marker": False,
+            },
+            "unexpected comment",
+        ),
+        (
+            {
+                "found": FoundDatabase(oid=50002, owner_oid=ROLE, comment=None),
+                "require_marker": False,
+            },
+            "OID changed",
+        ),
     ],
 )
 def test_anything_else_is_refused(kwargs, reason):

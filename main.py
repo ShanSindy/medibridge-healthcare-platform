@@ -1,4 +1,3 @@
-
 from typing import Literal
 from urllib.parse import urlencode
 
@@ -43,7 +42,12 @@ from models import (
     AppointmentUpdate,
 )
 
-from fhir import patient_to_fhir, provider_to_fhir, provider_to_practitioner_role, create_operation_outcome
+from fhir import (
+    patient_to_fhir,
+    provider_to_fhir,
+    provider_to_practitioner_role,
+    create_operation_outcome,
+)
 
 from hl7_service import (
     register_patient_from_hl7,
@@ -83,9 +87,6 @@ from audit import log_audit_event
 from audit_service import get_audit_logs
 
 
-
-
-
 app = FastAPI()
 
 
@@ -118,47 +119,34 @@ PROVIDER_WRITE_CONSTRAINTS = {
 
 
 @app.exception_handler(RequestValidationError)
-async def fhir_validation_exception_handler(
-    request: Request,
-    exc: RequestValidationError
-):
+async def fhir_validation_exception_handler(request: Request, exc: RequestValidationError):
     if request.url.path.startswith("/fhir/"):
         return JSONResponse(
             status_code=422,
             content=create_operation_outcome(
-                code="invalid",
-                diagnostics="Invalid FHIR request parameters"
+                code="invalid", diagnostics="Invalid FHIR request parameters"
             ),
-            media_type="application/fhir+json"
+            media_type="application/fhir+json",
         )
 
-    return await request_validation_exception_handler(
-        request,
-        exc
-    )
+    return await request_validation_exception_handler(request, exc)
+
 
 @app.get("/")
 def home():
-    return {
-        "application": "MediBridge",
-        "status": "running"
-    }
+    return {"application": "MediBridge", "status": "running"}
+
 
 @app.get("/health")
 def health_check():
-    return {
-        "status": "healthy",
-        "service": "MediBridge API"
-    }
+    return {"status": "healthy", "service": "MediBridge API"}
 
 
 @app.get("/audit-logs")
 def list_audit_logs(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    current_user: dict = Depends(
-        require_permission("audit:read")
-    ),
+    current_user: dict = Depends(require_permission("audit:read")),
 ):
     """Retrieve audit history for authorized administrators."""
 
@@ -170,7 +158,6 @@ def list_audit_logs(
             offset=offset,
         ),
     }
-
 
 
 @app.get(
@@ -217,16 +204,13 @@ def get_patient(patient_id: int):
                 FROM patients
                 WHERE id = %s
                 """,
-                (patient_id,)
+                (patient_id,),
             )
 
             row = cursor.fetchone()
 
     if row is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Patient not found"
-        )
+        raise HTTPException(status_code=404, detail="Patient not found")
 
     return {
         "id": row[0],
@@ -243,7 +227,6 @@ def get_patient(patient_id: int):
     status_code=201,
     dependencies=[Depends(require_permission("patients:write"))],
 )
-
 def create_patient(
     patient: PatientCreate,
     current_user: dict = Depends(get_current_user),
@@ -295,7 +278,6 @@ def create_patient(
     status_code=204,
     dependencies=[Depends(require_permission("patients:write"))],
 )
-
 def delete_patient(
     patient_id: int,
     current_user: dict = Depends(get_current_user),
@@ -333,7 +315,6 @@ def delete_patient(
     response_model=Patient,
     dependencies=[Depends(require_permission("patients:write"))],
 )
-
 def update_patient(
     patient_id: int,
     patient: PatientCreate,
@@ -386,10 +367,6 @@ def update_patient(
     }
 
 
-
-
-
-
 @app.get("/fhir/metadata")
 def get_fhir_metadata():
     return {
@@ -404,13 +381,8 @@ def get_fhir_metadata():
             "providing FHIR R4 Patient, Practitioner, and PractitionerRole resource access and search."
         ),
         "kind": "instance",
-        "software": {
-            "name": "MediBridge Healthcare Platform",
-            "version": "0.1.0"
-        },
-        "implementation": {
-            "description": "MediBridge FHIR API"
-        },
+        "software": {"name": "MediBridge Healthcare Platform", "version": "0.1.0"},
+        "implementation": {"description": "MediBridge FHIR API"},
         "fhirVersion": "4.0.1",
         "format": ["application/fhir+json"],
         "rest": [
@@ -420,24 +392,17 @@ def get_fhir_metadata():
                     {
                         "type": "Patient",
                         "profile": "http://hl7.org/fhir/StructureDefinition/Patient",
-                        "interaction": [
-                            {"code": "read"},
-                            {"code": "search-type"}
-                        ],
+                        "interaction": [{"code": "read"}, {"code": "search-type"}],
                         "searchParam": [
                             {
                                 "name": "family",
                                 "type": "string",
-                                "documentation": (
-                                    "Search patients by family name."
-                                )
+                                "documentation": ("Search patients by family name."),
                             },
                             {
                                 "name": "given",
                                 "type": "string",
-                                "documentation": (
-                                    "Search patients by given name."
-                                )
+                                "documentation": ("Search patients by given name."),
                             },
                             {
                                 "name": "identifier",
@@ -446,41 +411,31 @@ def get_fhir_metadata():
                                     "Search patients by identifier value "
                                     "or by system and value using "
                                     "system|value."
-                                )
-                            }
-                        ]
+                                ),
+                            },
+                        ],
                     },
                     {
                         "type": "Practitioner",
                         "profile": "http://hl7.org/fhir/StructureDefinition/Practitioner",
-                        "interaction": [
-                            {"code": "read"},
-                            {"code": "search-type"}
-                        ],
+                        "interaction": [{"code": "read"}, {"code": "search-type"}],
                         "searchParam": [
                             {
                                 "name": "family",
                                 "type": "string",
-                                "documentation": (
-                                    "Search practitioners by family name."
-                                )
+                                "documentation": ("Search practitioners by family name."),
                             },
                             {
                                 "name": "given",
                                 "type": "string",
-                                "documentation": (
-                                    "Search practitioners by given name."
-                                )
-                            }
-                        ]
+                                "documentation": ("Search practitioners by given name."),
+                            },
+                        ],
                     },
                     {
                         "type": "PractitionerRole",
                         "profile": "http://hl7.org/fhir/StructureDefinition/PractitionerRole",
-                        "interaction": [
-                            {"code": "read"},
-                            {"code": "search-type"}
-                        ],
+                        "interaction": [{"code": "read"}, {"code": "search-type"}],
                         "searchParam": [
                             {
                                 "name": "specialty",
@@ -490,17 +445,14 @@ def get_fhir_metadata():
                                     "matching against specialty display text. "
                                     "FHIR token system|code matching is not yet "
                                     "implemented."
-                                )
+                                ),
                             }
-                        ]
-                    }
-                ]
+                        ],
+                    },
+                ],
             }
-        ]
+        ],
     }
-
-
-
 
 
 @app.get(
@@ -516,7 +468,7 @@ def get_fhir_patient(patient_id: int):
                 FROM patients
                 WHERE id = %s
                 """,
-                (patient_id,)
+                (patient_id,),
             )
 
             row = cursor.fetchone()
@@ -524,30 +476,15 @@ def get_fhir_patient(patient_id: int):
     if row is None:
         return JSONResponse(
             status_code=404,
-            content=create_operation_outcome(
-                code="not-found",
-                diagnostics="Patient not found"
-            ),
-            media_type="application/fhir+json"
+            content=create_operation_outcome(code="not-found", diagnostics="Patient not found"),
+            media_type="application/fhir+json",
         )
 
     patient = Patient(
-        id=row[0],
-        first_name=row[1],
-        last_name=row[2],
-        date_of_birth=row[3],
-        gender=row[4]
+        id=row[0], first_name=row[1], last_name=row[2], date_of_birth=row[3], gender=row[4]
     )
 
-    return patient_to_fhir(
-        patient,
-        identifiers=get_patient_identifiers(patient_id)
-    )
-
-
-
-
-
+    return patient_to_fhir(patient, identifiers=get_patient_identifiers(patient_id))
 
 
 @app.get(
@@ -560,15 +497,11 @@ def get_fhir_patients(
     given: str | None = None,
     identifier: str | None = None,
     count: int = Query(default=10, alias="_count", ge=1, le=100),
-    offset: int = Query(default=0, alias="_offset", ge=0)
+    offset: int = Query(default=0, alias="_offset", ge=0),
 ):
     # Escape SQL LIKE wildcards for prefix matching.
     def prefix_pattern(value: str) -> str:
-        escaped = (
-            value.replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
+        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return f"{escaped}%"
 
     # Build search filters and their SQL parameters.
@@ -612,11 +545,7 @@ def get_fhir_patients(
             )
             params.append(identifier)
 
-    where_clause = (
-        "WHERE " + " AND ".join(conditions)
-        if conditions
-        else ""
-    )
+    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -634,7 +563,7 @@ def get_fhir_patients(
                 ORDER BY p.id
                 LIMIT %s OFFSET %s
                 """,
-                (*params, count, offset)
+                (*params, count, offset),
             )
             rows = cursor.fetchall()
 
@@ -645,26 +574,17 @@ def get_fhir_patients(
                 FROM patients p
                 {where_clause}
                 """,
-                tuple(params)
+                tuple(params),
             )
             total_matches = cursor.fetchone()[0]
 
     patients = [
-        Patient(
-            id=row[0],
-            first_name=row[1],
-            last_name=row[2],
-            date_of_birth=row[3],
-            gender=row[4]
-        )
+        Patient(id=row[0], first_name=row[1], last_name=row[2], date_of_birth=row[3], gender=row[4])
         for row in rows
     ]
 
     # Retrieve identifiers for the entire page in one query.
-    identifiers_by_patient = get_identifiers_for_patients(
-        [patient.id for patient in patients]
-    )
-
+    identifiers_by_patient = get_identifiers_for_patients([patient.id for patient in patients])
 
     # Build pagination links and preserve search filters.
     def page_url(page_offset: int) -> str:
@@ -684,24 +604,13 @@ def get_fhir_patients(
 
         return f"{request.url.path}?{urlencode(url_params)}"
 
-    links = [
-        {
-            "relation": "self",
-            "url": page_url(offset)
-        }
-    ]
+    links = [{"relation": "self", "url": page_url(offset)}]
 
     if offset + count < total_matches:
-        links.append({
-            "relation": "next",
-            "url": page_url(offset + count)
-        })
+        links.append({"relation": "next", "url": page_url(offset + count)})
 
     if offset > 0:
-        links.append({
-            "relation": "previous",
-            "url": page_url(max(0, offset - count))
-        })
+        links.append({"relation": "previous", "url": page_url(max(0, offset - count))})
 
     return {
         "resourceType": "Bundle",
@@ -710,21 +619,13 @@ def get_fhir_patients(
         "link": links,
         "entry": [
             {
-                "fullUrl": str(
-                    request.url_for(
-                        "get_fhir_patient",
-                        patient_id=patient.id
-                    )
-                ),
+                "fullUrl": str(request.url_for("get_fhir_patient", patient_id=patient.id)),
                 "resource": patient_to_fhir(
-                    patient,
-                    identifiers=identifiers_by_patient.get(
-                        patient.id, []
-                    )
-                )
+                    patient, identifiers=identifiers_by_patient.get(patient.id, [])
+                ),
             }
             for patient in patients
-        ]
+        ],
     }
 
 
@@ -737,36 +638,21 @@ def get_fhir_patients(
             "required": True,
             "content": {
                 "text/plain": {
-                    "schema": {
-                        "type": "string",
-                        "description": "Raw HL7 ADT^A04 message"
-                    }
+                    "schema": {"type": "string", "description": "Raw HL7 ADT^A04 message"}
                 }
-            }
+            },
         }
-    }
+    },
 )
-
-
 async def receive_hl7_adt(request: Request):
-    content_type = request.headers.get(
-        "content-type", ""
-    ).split(";")[0].strip().lower()
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
 
     if content_type != "text/plain":
-        raise HTTPException(
-            status_code=415,
-            detail="Content-Type must be text/plain."
-        )
+        raise HTTPException(status_code=415, detail="Content-Type must be text/plain.")
 
-    raw_message = (
-        await request.body()
-    ).decode("utf-8", errors="replace")
+    raw_message = (await request.body()).decode("utf-8", errors="replace")
 
-    wants_hl7_ack = (
-        "application/hl7-v2"
-        in request.headers.get("accept", "").lower()
-    )
+    wants_hl7_ack = "application/hl7-v2" in request.headers.get("accept", "").lower()
 
     try:
         segments = parse_hl7_message(raw_message)
@@ -779,54 +665,32 @@ async def receive_hl7_adt(request: Request):
             result = update_patient_from_hl7(raw_message)
 
         else:
-            raise ValueError(
-                "Unsupported HL7 message type."
-            )
+            raise ValueError("Unsupported HL7 message type.")
 
     except ValueError as exc:
         if wants_hl7_ack and "segments" in locals():
-            ack = generate_hl7_ack(
-                segments,
-                acknowledgment_code="AR",
-                error_message=str(exc)
-            )
-            return Response(
-                content=ack,
-                media_type="application/hl7-v2",
-                status_code=400
-            )
+            ack = generate_hl7_ack(segments, acknowledgment_code="AR", error_message=str(exc))
+            return Response(content=ack, media_type="application/hl7-v2", status_code=400)
 
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     except Exception:
         if wants_hl7_ack and "segments" in locals():
             ack = generate_hl7_ack(
                 segments,
                 acknowledgment_code="AE",
-                error_message="Internal application processing error"
+                error_message="Internal application processing error",
             )
-            return Response(
-                content=ack,
-                media_type="application/hl7-v2",
-                status_code=500
-            )
+            return Response(content=ack, media_type="application/hl7-v2", status_code=500)
 
         raise
 
     if wants_hl7_ack:
-        ack = generate_hl7_ack(
-            segments,
-            acknowledgment_code="AA"
-        )
-        return Response(
-            content=ack,
-            media_type="application/hl7-v2"
-        )
+        ack = generate_hl7_ack(segments, acknowledgment_code="AA")
+        return Response(content=ack, media_type="application/hl7-v2")
 
     return result
+
 
 @app.post(
     "/providers",
@@ -857,6 +721,7 @@ def list_providers_endpoint():
     """
     return get_all_providers()
 
+
 @app.get(
     "/providers/{provider_id}",
     response_model=Provider,
@@ -876,6 +741,7 @@ def get_provider_endpoint(provider_id: int):
         )
 
     return provider
+
 
 @app.put(
     "/providers/{provider_id}",
@@ -903,13 +769,13 @@ def update_provider_endpoint(
 
     return updated_provider
 
+
 @app.delete(
     "/providers/{provider_id}",
     status_code=204,
     tags=["Providers"],
     dependencies=[Depends(require_permission("providers:write"))],
 )
-
 def delete_provider_endpoint(provider_id: int):
     """
     Delete a healthcare provider by ID.
@@ -926,7 +792,6 @@ def delete_provider_endpoint(provider_id: int):
         )
 
     return None
-
 
 
 @app.post(
@@ -951,7 +816,6 @@ def delete_provider_endpoint(provider_id: int):
         }
     },
 )
-
 def create_appointment_endpoint(appointment: AppointmentCreate):
     try:
         return create_appointment(appointment)
@@ -965,12 +829,8 @@ def create_appointment_endpoint(appointment: AppointmentCreate):
 
         raise HTTPException(
             status_code=409,
-            detail=(
-                "This provider already has a scheduled "
-                "appointment during the requested time."
-            ),
+            detail=("This provider already has a scheduled appointment during the requested time."),
         ) from exc
-
 
 
 @app.get(
@@ -990,6 +850,7 @@ def list_appointments_endpoint(
         status=status,
     )
 
+
 @app.get(
     "/appointments/{appointment_id}",
     response_model=Appointment,
@@ -1006,7 +867,6 @@ def get_appointment_endpoint(appointment_id: int):
         )
 
     return appointment
-
 
 
 @app.put(
@@ -1030,7 +890,6 @@ def get_appointment_endpoint(appointment_id: int):
         }
     },
 )
-
 def update_appointment_endpoint(
     appointment_id: int,
     appointment: AppointmentUpdate,
@@ -1047,10 +906,7 @@ def update_appointment_endpoint(
 
         raise HTTPException(
             status_code=409,
-            detail=(
-                "This provider already has a scheduled "
-                "appointment during the requested time."
-            ),
+            detail=("This provider already has a scheduled appointment during the requested time."),
         ) from exc
 
     if updated_appointment is None:
@@ -1078,6 +934,7 @@ def cancel_appointment_endpoint(appointment_id: int):
         )
 
     return cancelled_appointment
+
 
 @app.get("/auth/me", tags=["Authentication"])
 def read_current_user(
@@ -1111,6 +968,7 @@ def login(
         "expires_in": JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     }
 
+
 @app.get("/auth/admin-check", tags=["Authentication"])
 def admin_check(
     current_user: dict = Depends(require_roles("admin")),
@@ -1135,16 +993,13 @@ def get_fhir_practitioner(practitioner_id: int):
         return JSONResponse(
             status_code=404,
             content=create_operation_outcome(
-                code="not-found",
-                diagnostics="Practitioner not found"
+                code="not-found", diagnostics="Practitioner not found"
             ),
-            media_type="application/fhir+json"
+            media_type="application/fhir+json",
         )
 
-    return JSONResponse(
-        content=provider_to_fhir(provider),
-        media_type="application/fhir+json"
-    )
+    return JSONResponse(content=provider_to_fhir(provider), media_type="application/fhir+json")
+
 
 from provider_service import search_providers
 
@@ -1189,16 +1044,20 @@ def search_fhir_practitioners(
     ]
 
     if offset + count < total:
-        links.append({
-            "relation": "next",
-            "url": page_url(offset + count),
-        })
+        links.append(
+            {
+                "relation": "next",
+                "url": page_url(offset + count),
+            }
+        )
 
     if offset > 0:
-        links.append({
-            "relation": "previous",
-            "url": page_url(max(0, offset - count)),
-        })
+        links.append(
+            {
+                "relation": "previous",
+                "url": page_url(max(0, offset - count)),
+            }
+        )
 
     bundle = {
         "resourceType": "Bundle",
@@ -1224,6 +1083,7 @@ def search_fhir_practitioners(
         media_type="application/fhir+json",
     )
 
+
 @app.get(
     "/fhir/PractitionerRole/{role_id}",
     dependencies=[Depends(require_permission("providers:read"))],
@@ -1235,16 +1095,15 @@ def get_fhir_practitioner_role(role_id: int):
         return JSONResponse(
             status_code=404,
             content=create_operation_outcome(
-                code="not-found",
-                diagnostics="PractitionerRole not found"
+                code="not-found", diagnostics="PractitionerRole not found"
             ),
-            media_type="application/fhir+json"
+            media_type="application/fhir+json",
         )
 
     return JSONResponse(
-        content=provider_to_practitioner_role(provider),
-        media_type="application/fhir+json"
+        content=provider_to_practitioner_role(provider), media_type="application/fhir+json"
     )
+
 
 @app.get(
     "/fhir/PractitionerRole",
@@ -1281,16 +1140,20 @@ def search_fhir_practitioner_roles(
     ]
 
     if offset + count < total:
-        links.append({
-            "relation": "next",
-            "url": page_url(offset + count),
-        })
+        links.append(
+            {
+                "relation": "next",
+                "url": page_url(offset + count),
+            }
+        )
 
     if offset > 0:
-        links.append({
-            "relation": "previous",
-            "url": page_url(max(0, offset - count)),
-        })
+        links.append(
+            {
+                "relation": "previous",
+                "url": page_url(max(0, offset - count)),
+            }
+        )
 
     bundle = {
         "resourceType": "Bundle",
@@ -1315,4 +1178,3 @@ def search_fhir_practitioner_roles(
         content=bundle,
         media_type="application/fhir+json",
     )
-

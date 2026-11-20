@@ -1,4 +1,3 @@
-
 from argon2 import PasswordHasher
 
 from security import verify_password
@@ -8,9 +7,7 @@ from user_service import get_user_by_username
 # Used when an account does not exist, so password verification
 # still performs an Argon2 operation.
 _dummy_hasher = PasswordHasher()
-DUMMY_PASSWORD_HASH = _dummy_hasher.hash(
-    "MediBridgeDummyPasswordForTimingProtection"
-)
+DUMMY_PASSWORD_HASH = _dummy_hasher.hash("MediBridgeDummyPasswordForTimingProtection")
 
 
 def authenticate_user(

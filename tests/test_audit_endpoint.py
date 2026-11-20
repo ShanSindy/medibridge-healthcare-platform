@@ -1,4 +1,3 @@
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -27,9 +26,7 @@ def make_user(role):
 
 
 def test_admin_can_read_audit_logs(monkeypatch):
-    app.dependency_overrides[get_current_user] = (
-        lambda: make_user("admin")
-    )
+    app.dependency_overrides[get_current_user] = lambda: make_user("admin")
 
     monkeypatch.setattr(
         "main.get_audit_logs",
@@ -51,9 +48,7 @@ def test_admin_can_read_audit_logs(monkeypatch):
     ["clinician", "scheduler", "viewer"],
 )
 def test_non_admin_cannot_read_audit_logs(role):
-    app.dependency_overrides[get_current_user] = (
-        lambda: make_user(role)
-    )
+    app.dependency_overrides[get_current_user] = lambda: make_user(role)
 
     response = client.get("/audit-logs")
 
@@ -65,10 +60,9 @@ def test_unauthenticated_user_cannot_read_audit_logs():
 
     assert response.status_code == 401
 
+
 def test_audit_endpoint_custom_pagination(monkeypatch):
-    app.dependency_overrides[get_current_user] = (
-        lambda: make_user("admin")
-    )
+    app.dependency_overrides[get_current_user] = lambda: make_user("admin")
 
     captured = {}
 
@@ -82,9 +76,7 @@ def test_audit_endpoint_custom_pagination(monkeypatch):
         mock_get_audit_logs,
     )
 
-    response = client.get(
-        "/audit-logs?limit=20&offset=10"
-    )
+    response = client.get("/audit-logs?limit=20&offset=10")
 
     assert response.status_code == 200
     assert response.json() == {
@@ -110,31 +102,23 @@ def test_audit_endpoint_rejects_invalid_pagination(
     query_string,
     monkeypatch,
 ):
-    app.dependency_overrides[get_current_user] = (
-        lambda: make_user("admin")
-    )
+    app.dependency_overrides[get_current_user] = lambda: make_user("admin")
 
     def unexpected_database_call(limit, offset):
-        pytest.fail(
-            "Database should not be queried for invalid pagination"
-        )
+        pytest.fail("Database should not be queried for invalid pagination")
 
     monkeypatch.setattr(
         "main.get_audit_logs",
         unexpected_database_call,
     )
 
-    response = client.get(
-        f"/audit-logs?{query_string}"
-    )
+    response = client.get(f"/audit-logs?{query_string}")
 
     assert response.status_code == 422
 
 
 def test_audit_endpoint_returns_metadata_only(monkeypatch):
-    app.dependency_overrides[get_current_user] = (
-        lambda: make_user("admin")
-    )
+    app.dependency_overrides[get_current_user] = lambda: make_user("admin")
 
     monkeypatch.setattr(
         "main.get_audit_logs",

@@ -1,4 +1,3 @@
-
 from database import get_connection
 
 
@@ -33,12 +32,6 @@ def get_audit_logs(
                 (limit, offset),
             )
 
-            columns = [
-                column.name
-                for column in cursor.description
-            ]
+            columns = [column.name for column in cursor.description]
 
-            return [
-                dict(zip(columns, row))
-                for row in cursor.fetchall()
-            ]
+            return [dict(zip(columns, row)) for row in cursor.fetchall()]

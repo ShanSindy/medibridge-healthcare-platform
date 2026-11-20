@@ -182,9 +182,7 @@ def test_delete_patient_with_appointments_returns_409_and_keeps_patient(records)
     response = client.delete(f"/patients/{patient_id}")
 
     assert response.status_code == 409
-    assert response.json() == {
-        "detail": "Patient has appointments and cannot be deleted."
-    }
+    assert response.json() == {"detail": "Patient has appointments and cannot be deleted."}
     assert _count("patients", "id", patient_id) == 1
     assert _count("appointments", "patient_id", patient_id) == 1
 
@@ -206,9 +204,7 @@ def test_delete_provider_with_appointments_returns_409_and_keeps_provider(record
     response = client.delete(f"/providers/{provider_id}")
 
     assert response.status_code == 409
-    assert response.json() == {
-        "detail": "Provider has appointments and cannot be deleted."
-    }
+    assert response.json() == {"detail": "Provider has appointments and cannot be deleted."}
     assert _count("providers", "id", provider_id) == 1
 
 
@@ -248,7 +244,9 @@ def test_update_provider_to_duplicate_email_returns_409(records):
     records["provider"]("integrity.taken@example.com")
     provider_id = records["provider"]("integrity.other@example.com")
 
-    response = client.put(f"/providers/{provider_id}", json=_provider_body("integrity.taken@example.com"))
+    response = client.put(
+        f"/providers/{provider_id}", json=_provider_body("integrity.taken@example.com")
+    )
 
     assert response.status_code == 409
     assert response.json() == {"detail": "A provider with this email already exists."}
@@ -257,7 +255,9 @@ def test_update_provider_to_duplicate_email_returns_409(records):
 def test_update_provider_keeping_its_own_email_still_succeeds(records):
     provider_id = records["provider"]("integrity.same@example.com")
 
-    response = client.put(f"/providers/{provider_id}", json=_provider_body("integrity.same@example.com"))
+    response = client.put(
+        f"/providers/{provider_id}", json=_provider_body("integrity.same@example.com")
+    )
 
     assert response.status_code == 200
     assert response.json()["email"] == "integrity.same@example.com"

@@ -41,9 +41,7 @@ def authorize(monkeypatch, role="admin"):
     "role",
     ["admin", "clinician", "scheduler", "viewer"],
 )
-def test_authorized_roles_can_search_practitioner_roles(
-    monkeypatch, role
-):
+def test_authorized_roles_can_search_practitioner_roles(monkeypatch, role):
     headers = authorize(monkeypatch, role)
     captured = {}
 
@@ -98,10 +96,7 @@ def test_practitioner_role_search_pagination(monkeypatch):
         "offset": 4,
     }
 
-    links = {
-        link["relation"]: link["url"]
-        for link in response.json()["link"]
-    }
+    links = {link["relation"]: link["url"] for link in response.json()["link"]}
 
     assert set(links) == {"self", "next", "previous"}
     assert "specialty=Card" in links["self"]
@@ -142,9 +137,7 @@ def test_practitioner_role_search_requires_authentication():
         {"_offset": -1},
     ],
 )
-def test_practitioner_role_search_rejects_invalid_pagination(
-    monkeypatch, params
-):
+def test_practitioner_role_search_rejects_invalid_pagination(monkeypatch, params):
     headers = authorize(monkeypatch)
 
     response = client.get(

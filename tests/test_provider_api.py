@@ -1,4 +1,3 @@
-
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -40,9 +39,7 @@ def sample_provider():
         "specialty": "Neurology",
         "email": "emily.carter@example.com",
         "phone": "615-555-0199",
-        "created_at": datetime(
-            2026, 11, 10, 16, 20, tzinfo=timezone.utc
-        ),
+        "created_at": datetime(2026, 11, 10, 16, 20, tzinfo=timezone.utc),
     }
 
 
@@ -71,15 +68,14 @@ def test_get_provider_by_id_not_found():
         response = client.get("/providers/99999")
 
     assert response.status_code == 404
-    assert response.json() == {
-        "detail": "Provider not found"
-    }
+    assert response.json() == {"detail": "Provider not found"}
 
 
 def test_get_provider_by_id_invalid_id():
     response = client.get("/providers/abc")
 
     assert response.status_code == 422
+
 
 def test_create_provider_success():
     provider_data = {
@@ -160,6 +156,7 @@ def test_create_provider_blank_specialty():
     assert response.status_code == 422
     mock_create.assert_not_called()
 
+
 def test_get_all_providers_success():
     providers = [
         sample_provider(),
@@ -170,9 +167,7 @@ def test_get_all_providers_success():
             "specialty": "Dermatology",
             "email": "michael.reed@example.com",
             "phone": "615-555-0123",
-            "created_at": datetime(
-                2026, 11, 10, 17, 0, tzinfo=timezone.utc
-            ),
+            "created_at": datetime(2026, 11, 10, 17, 0, tzinfo=timezone.utc),
         },
     ]
 
@@ -206,6 +201,7 @@ def test_get_all_providers_empty():
     assert response.json() == []
 
     mock_get_all.assert_called_once_with()
+
 
 def test_update_provider_success():
     provider_data = {
@@ -254,9 +250,7 @@ def test_update_provider_not_found():
         )
 
     assert response.status_code == 404
-    assert response.json() == {
-        "detail": "Provider not found"
-    }
+    assert response.json() == {"detail": "Provider not found"}
 
     mock_update.assert_called_once()
 
@@ -276,6 +270,7 @@ def test_update_provider_invalid_data():
 
     assert response.status_code == 422
     mock_update.assert_not_called()
+
 
 def test_delete_provider_success():
     with patch(
@@ -298,9 +293,7 @@ def test_delete_provider_not_found():
         response = client.delete("/providers/99999")
 
     assert response.status_code == 404
-    assert response.json() == {
-        "detail": "Provider not found"
-    }
+    assert response.json() == {"detail": "Provider not found"}
 
     mock_delete.assert_called_once_with(99999)
 

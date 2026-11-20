@@ -1,4 +1,3 @@
-
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -10,9 +9,7 @@ load_dotenv()
 
 JWT_SECRET_KEY = os.environ["JWT_SECRET_KEY"]
 JWT_ALGORITHM = "HS256"
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(
-    os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30")
-)
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
 if len(JWT_SECRET_KEY) < 48:
     raise ValueError("JWT_SECRET_KEY must be at least 48 characters")
@@ -25,9 +22,7 @@ def create_access_token(user_id: int) -> str:
     """Create a signed JWT access token for a user."""
 
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(
-        minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES
-    )
+    expires_at = now + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
 
     payload = {
         "sub": str(user_id),

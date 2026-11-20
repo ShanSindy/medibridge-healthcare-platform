@@ -1,4 +1,3 @@
-
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -27,8 +26,7 @@ def test_reject_invalid_signature():
             "sub": "1",
             "iat": datetime.now(timezone.utc),
             "nbf": datetime.now(timezone.utc),
-            "exp": datetime.now(timezone.utc)
-            + timedelta(minutes=30),
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
             "type": "access",
         },
         "another-independent-test-signing-key-with-sufficient-length",
