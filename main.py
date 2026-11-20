@@ -18,7 +18,14 @@ from fastapi.exception_handlers import (
     request_validation_exception_handler,
 )
 
-from psycopg.errors import ExclusionViolation
+from psycopg.errors import (
+    ExclusionViolation,
+    ForeignKeyViolation,
+    RestrictViolation,
+    UniqueViolation,
+)
+
+from db_errors import raise_for_constraint
 
 from database import (
     get_connection,
@@ -80,6 +87,34 @@ from audit_service import get_audit_logs
 
 
 app = FastAPI()
+
+
+# Constraint violations that are client errors, per operation. Anything not
+# listed still propagates, so unexpected database errors are not masked.
+# Deletes catch RestrictViolation (ON DELETE RESTRICT, the current schema)
+# and ForeignKeyViolation (ON DELETE NO ACTION) so either definition works.
+APPOINTMENT_REFERENCE_CONSTRAINTS = {
+    "appointments_patient_id_fkey": (404, "Patient not found"),
+    "appointments_provider_id_fkey": (404, "Provider not found"),
+}
+PATIENT_DELETE_CONSTRAINTS = {
+    "appointments_patient_id_fkey": (
+        409,
+        "Patient has appointments and cannot be deleted.",
+    ),
+}
+PROVIDER_DELETE_CONSTRAINTS = {
+    "appointments_provider_id_fkey": (
+        409,
+        "Provider has appointments and cannot be deleted.",
+    ),
+}
+PROVIDER_WRITE_CONSTRAINTS = {
+    "providers_email_key": (
+        409,
+        "A provider with this email already exists.",
+    ),
+}
 
 
 @app.exception_handler(RequestValidationError)
@@ -267,10 +302,13 @@ def delete_patient(
 ):
     with get_connection() as conn:
         with conn.cursor() as cursor:
-            cursor.execute(
-                "DELETE FROM patients WHERE id = %s RETURNING id",
-                (patient_id,),
-            )
+            try:
+                cursor.execute(
+                    "DELETE FROM patients WHERE id = %s RETURNING id",
+                    (patient_id,),
+                )
+            except (ForeignKeyViolation, RestrictViolation) as exc:
+                raise_for_constraint(exc, PATIENT_DELETE_CONSTRAINTS)
 
             deleted_patient = cursor.fetchone()
 
@@ -801,7 +839,10 @@ def create_provider_endpoint(provider: ProviderCreate):
     """
     Create a new healthcare provider.
     """
-    return create_provider(provider)
+    try:
+        return create_provider(provider)
+    except UniqueViolation as exc:
+        raise_for_constraint(exc, PROVIDER_WRITE_CONSTRAINTS)
 
 
 @app.get(
@@ -849,7 +890,10 @@ def update_provider_endpoint(
     """
     Update an existing healthcare provider.
     """
-    updated_provider = update_provider(provider_id, provider)
+    try:
+        updated_provider = update_provider(provider_id, provider)
+    except UniqueViolation as exc:
+        raise_for_constraint(exc, PROVIDER_WRITE_CONSTRAINTS)
 
     if updated_provider is None:
         raise HTTPException(
@@ -870,7 +914,10 @@ def delete_provider_endpoint(provider_id: int):
     """
     Delete a healthcare provider by ID.
     """
-    deleted = delete_provider(provider_id)
+    try:
+        deleted = delete_provider(provider_id)
+    except (ForeignKeyViolation, RestrictViolation) as exc:
+        raise_for_constraint(exc, PROVIDER_DELETE_CONSTRAINTS)
 
     if not deleted:
         raise HTTPException(
@@ -908,6 +955,9 @@ def delete_provider_endpoint(provider_id: int):
 def create_appointment_endpoint(appointment: AppointmentCreate):
     try:
         return create_appointment(appointment)
+
+    except ForeignKeyViolation as exc:
+        raise_for_constraint(exc, APPOINTMENT_REFERENCE_CONSTRAINTS)
 
     except ExclusionViolation as exc:
         if exc.diag.constraint_name != "appointments_no_provider_overlap":
