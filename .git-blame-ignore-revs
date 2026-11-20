@@ -1,0 +1,6 @@
+# Commits that only reformat code. Use with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub applies this file automatically in its blame view.
+
+# style: format backend with Ruff
+1a3aae66f0e9ebf888c88fb05e54f6a7ab6dad93
