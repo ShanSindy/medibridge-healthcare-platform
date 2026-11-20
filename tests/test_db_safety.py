@@ -1,14 +1,25 @@
 """Unit tests for the test-database safety checks. No database access."""
 
-import pytest
+import os
+from pathlib import Path
 
-from db_safety import (
+import pytest
+from dotenv import load_dotenv
+
+from tests.db_safety import (
+    CONNECTION_KEYS,
     OWNERSHIP_MARKER,
+    CreatedDatabase,
+    FoundDatabase,
     UnsafeTestDatabase,
-    check_ownership,
+    apply_environment,
+    check_identity,
     check_role,
+    cleanup_targets,
     is_disposable_name,
+    is_session_database,
     new_database_name,
+    read_test_env_file,
     resolve_settings,
     validate_settings,
 )
@@ -31,7 +42,6 @@ def test_valid_settings_are_accepted():
     config = validate_settings(VALID)
     assert (config.host, config.port, config.maintenance_db) == ("localhost", 5432, "postgres")
     assert config.allow_superuser is False
-    assert config.app_settings["MEDIBRIDGE_ENV"] == "test"
 
 
 @pytest.mark.parametrize("value", [None, "", "development", "production", "TEST"])
@@ -86,17 +96,11 @@ def test_maintenance_database_cannot_be_a_disposable_database():
         validate_settings({**VALID, "TEST_DB_MAINTENANCE_DB": new_database_name()})
 
 
-def test_superuser_opt_in_requires_exactly_1():
-    assert validate_settings({**VALID, "TEST_DB_ALLOW_SUPERUSER": "1"}).allow_superuser is True
-    assert validate_settings({**VALID, "TEST_DB_ALLOW_SUPERUSER": "true"}).allow_superuser is False
-
-
-# --- where settings come from --------------------------------------------------
+# --- where settings come from (N1, N3) ----------------------------------------------
 
 
 def test_connection_settings_come_only_from_the_test_env_file_when_it_exists():
-    file_values = {**VALID}
-    del file_values["DB_PASSWORD"]
+    file_values = {k: v for k, v in VALID.items() if k != "DB_PASSWORD"}
     shell = {"DB_PASSWORD": "value-from-shell", "DB_HOST": "dev-host"}
 
     settings = resolve_settings(file_values, shell)
@@ -113,8 +117,8 @@ def test_process_environment_is_used_when_there_is_no_test_env_file():
 
 def test_harness_flags_may_come_from_the_shell():
     file_values = {k: v for k, v in VALID.items() if k != "MEDIBRIDGE_ENV"}
-    settings = resolve_settings(file_values, {"MEDIBRIDGE_ENV": "test", "TEST_DB_ALLOW_SUPERUSER": "1"})
-    assert validate_settings(settings).allow_superuser is True
+    settings = resolve_settings(file_values, {"MEDIBRIDGE_ENV": "test", "TEST_DB_ALLOWED_HOSTS": "localhost"})
+    assert validate_settings(settings).host == "localhost"
 
 
 def test_db_name_from_configuration_is_never_used():
@@ -122,7 +126,102 @@ def test_db_name_from_configuration_is_never_used():
     assert "DB_NAME" not in validate_settings(settings).app_settings
 
 
-# --- database names ------------------------------------------------------------
+def test_superuser_override_is_accepted_from_the_test_env_file():
+    settings = resolve_settings({**VALID, "TEST_DB_ALLOW_SUPERUSER": "1"}, {})
+    assert validate_settings(settings).allow_superuser is True
+
+
+def test_superuser_override_requires_exactly_1():
+    settings = resolve_settings({**VALID, "TEST_DB_ALLOW_SUPERUSER": "true"}, {})
+    assert validate_settings(settings).allow_superuser is False
+
+
+@pytest.mark.parametrize("file_values", [VALID, None], ids=["with-test-env-file", "ci-without-file"])
+def test_superuser_override_from_the_environment_is_rejected(file_values):
+    shell = {**VALID, "TEST_DB_ALLOW_SUPERUSER": "1"}
+    with pytest.raises(UnsafeTestDatabase, match="only accepted from the local .env.test"):
+        resolve_settings(file_values, shell)
+
+
+def test_without_a_test_env_file_the_superuser_override_is_impossible():
+    # CI has no .env.test, so nothing can turn the override on there.
+    settings = resolve_settings(None, VALID)
+    assert validate_settings(settings).allow_superuser is False
+
+
+def _apply(file_values, environ):
+    config = validate_settings(resolve_settings(file_values, environ))
+    apply_environment(environ, config, "medibridge_test_0123456789abcdef")
+    return environ
+
+
+def test_optional_settings_omitted_from_the_file_are_removed_not_inherited():
+    shell = {
+        "JWT_ACCESS_TOKEN_EXPIRE_MINUTES": "1",
+        "JWT_ALGORITHM": "none",
+        "DB_NAME": "medibridge",
+        "UNRELATED": "kept",
+    }
+
+    environ = _apply(dict(VALID), shell)
+
+    # The application falls back to its own coded defaults, not shell values.
+    assert "JWT_ACCESS_TOKEN_EXPIRE_MINUTES" not in environ
+    assert "JWT_ALGORITHM" not in environ
+    assert environ["DB_NAME"] == "medibridge_test_0123456789abcdef"
+    assert environ["UNRELATED"] == "kept"
+
+
+def test_optional_settings_defined_in_the_file_are_used():
+    file_values = {**VALID, "JWT_ACCESS_TOKEN_EXPIRE_MINUTES": "30"}
+    environ = _apply(file_values, {"JWT_ACCESS_TOKEN_EXPIRE_MINUTES": "1"})
+    assert environ["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"] == "30"
+
+
+def test_every_connection_setting_ends_up_from_the_file_or_absent():
+    shell = {key: "from-shell" for key in CONNECTION_KEYS}
+    environ = _apply(dict(VALID), shell)
+    for key in CONNECTION_KEYS:
+        assert environ.get(key) == VALID.get(key), key
+
+
+def test_apply_environment_disables_dotenv_and_sets_the_marker():
+    environ = _apply(dict(VALID), {})
+    assert environ["PYTHON_DOTENV_DISABLED"] == "1"
+    assert environ["MEDIBRIDGE_ENV"] == "test"
+
+
+def test_test_env_file_values_are_not_interpolated_from_the_environment(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env.test"
+    env_file.write_text("DB_PASSWORD=${SHELL_SECRET}\nDB_USER=tester\nEMPTY_KEY\n", encoding="utf-8")
+    monkeypatch.setenv("SHELL_SECRET", "leaked-from-shell")
+
+    values = read_test_env_file(env_file)
+
+    assert values["DB_PASSWORD"] == "${SHELL_SECRET}"
+    assert values["DB_USER"] == "tester"
+    assert "EMPTY_KEY" not in values
+
+
+def test_missing_test_env_file_reads_as_none(tmp_path):
+    assert read_test_env_file(tmp_path / "absent.env") is None
+
+
+def test_disabled_dotenv_does_not_load_a_development_env_file(tmp_path, monkeypatch):
+    dev_env = tmp_path / ".env"
+    dev_env.write_text("MEDIBRIDGE_DOTENV_PROBE=from-development-env\n", encoding="utf-8")
+    monkeypatch.delenv("MEDIBRIDGE_DOTENV_PROBE", raising=False)
+    monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
+
+    assert load_dotenv(dev_env) is False
+    assert "MEDIBRIDGE_DOTENV_PROBE" not in os.environ
+
+
+def test_the_running_session_has_dotenv_disabled():
+    assert os.environ.get("PYTHON_DOTENV_DISABLED") == "1"
+
+
+# --- database names and session identity --------------------------------------------
 
 
 def test_generated_names_are_disposable_and_unique():
@@ -149,7 +248,15 @@ def test_existing_and_malformed_names_are_not_disposable(name):
     assert not is_disposable_name(name)
 
 
-# --- server role -----------------------------------------------------------------
+def test_only_this_sessions_database_counts_as_the_session_database():
+    current = os.environ["DB_NAME"]
+    assert is_session_database(current)
+    assert not is_session_database(new_database_name())  # well-formed, but another session's
+    assert not is_session_database("medibridge_test")
+    assert not is_session_database("medibridge")
+
+
+# --- server role ----------------------------------------------------------------------
 
 
 def test_least_privileged_role_is_accepted():
@@ -172,33 +279,79 @@ def test_replica_is_rejected():
         check_role(is_superuser=False, can_create_db=True, in_recovery=True, allow_superuser=False)
 
 
-# --- ownership before truncate or drop --------------------------------------------
+# --- identity before truncate or drop (N2) ----------------------------------------------
 
 SESSION = "medibridge_test_0123456789abcdef"
+ROLE = 16384
+CREATED = CreatedDatabase(name=SESSION, oid=50001, owner_oid=ROLE)
+MARKED = FoundDatabase(oid=50001, owner_oid=ROLE, comment=OWNERSHIP_MARKER)
+UNMARKED = FoundDatabase(oid=50001, owner_oid=ROLE, comment=None)
 
 
-def test_owned_session_database_passes():
-    check_ownership(expected_name=SESSION, found_name=SESSION, comment=OWNERSHIP_MARKER, owned_by_current_role=True)
+def _identity(created=CREATED, found=MARKED, role=ROLE, require_marker=True, session=SESSION):
+    check_identity(
+        session_name=session,
+        created=created,
+        found=found,
+        current_role_oid=role,
+        require_marker=require_marker,
+    )
+
+
+def test_marked_database_created_by_this_process_passes():
+    _identity()
+
+
+def test_unmarked_database_passes_only_when_this_process_never_wrote_the_marker():
+    _identity(found=UNMARKED, require_marker=False)
+    with pytest.raises(UnsafeTestDatabase, match="ownership marker"):
+        _identity(found=UNMARKED, require_marker=True)
 
 
 @pytest.mark.parametrize(
-    ("expected_name", "found_name", "comment", "owned", "reason"),
+    ("kwargs", "reason"),
     [
-        ("medibridge_test", "medibridge_test", OWNERSHIP_MARKER, True, "not a disposable"),
-        ("medibridge", "medibridge", OWNERSHIP_MARKER, True, "not a disposable"),
-        (SESSION, None, OWNERSHIP_MARKER, True, "not this session"),
-        (SESSION, "medibridge_test_ffffffffffffffff", OWNERSHIP_MARKER, True, "not this session"),
-        (SESSION, SESSION, None, True, "ownership marker"),
-        (SESSION, SESSION, "some other comment", True, "ownership marker"),
-        (SESSION, SESSION, OWNERSHIP_MARKER, False, "not owned"),
-        (SESSION, SESSION, OWNERSHIP_MARKER, None, "not owned"),
+        ({"session": "medibridge_test"}, "not a disposable"),
+        ({"session": "medibridge"}, "not a disposable"),
+        ({"created": None}, "ownership cannot be established"),
+        ({"created": CreatedDatabase(name="medibridge_test_ffffffffffffffff", oid=50001, owner_oid=ROLE)},
+         "not this session"),
+        ({"found": None}, "no longer exists"),
+        ({"found": FoundDatabase(oid=50002, owner_oid=ROLE, comment=OWNERSHIP_MARKER)}, "OID changed"),
+        ({"found": FoundDatabase(oid=50001, owner_oid=99, comment=OWNERSHIP_MARKER)}, "not owned"),
+        ({"role": 99}, "not owned"),
+        ({"found": FoundDatabase(oid=50001, owner_oid=ROLE, comment="other")}, "ownership marker"),
+        ({"found": FoundDatabase(oid=50001, owner_oid=ROLE, comment="other"), "require_marker": False},
+         "unexpected comment"),
+        ({"found": FoundDatabase(oid=50002, owner_oid=ROLE, comment=None), "require_marker": False},
+         "OID changed"),
     ],
 )
-def test_anything_else_is_refused(expected_name, found_name, comment, owned, reason):
+def test_anything_else_is_refused(kwargs, reason):
     with pytest.raises(UnsafeTestDatabase, match=reason):
-        check_ownership(
-            expected_name=expected_name,
-            found_name=found_name,
-            comment=comment,
-            owned_by_current_role=owned,
-        )
+        _identity(**kwargs)
+
+
+# --- cleanup scope ------------------------------------------------------------------------
+
+
+def test_cleanup_targets_are_public_tables_except_migration_metadata():
+    rows = [("public", "patients"), ("public", "schema_migrations"), ("public", "audit_logs")]
+    assert cleanup_targets(rows) == ["audit_logs", "patients"]
+
+
+def test_tables_outside_the_supported_schema_stop_the_run():
+    rows = [("public", "patients"), ("reporting", "patient_summary")]
+    with pytest.raises(UnsafeTestDatabase, match="reporting.patient_summary"):
+        cleanup_targets(rows)
+
+
+def test_no_application_tables_is_an_error():
+    with pytest.raises(UnsafeTestDatabase, match="No application tables"):
+        cleanup_targets([("public", "schema_migrations")])
+
+
+def test_root_conftest_guard_exists_for_runs_started_inside_tests():
+    guard = Path(__file__).with_name("conftest.py").read_text(encoding="utf-8")
+    assert "_medibridge_database_isolation" in guard
+    assert 'os.environ["PYTHON_DOTENV_DISABLED"] = "1"' in guard

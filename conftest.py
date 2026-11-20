@@ -4,20 +4,27 @@ Database isolation for the MediBridge test suite.
 Every pytest session gets its own disposable PostgreSQL database:
 
 - Created on the configured test server with a cryptographically random name
-  (`medibridge_test_<16 hex>`), marked with an ownership comment, and built
-  with the project's own migrations (`migrate.py`).
+  (`medibridge_test_<16 hex>`). Its OID and owner are recorded right after
+  creation, it is marked with an ownership comment, and it is built with the
+  project's own migrations (`migrate.py`).
 - Emptied before and after every test. All application tables are truncated
-  in one statement with CASCADE; `schema_migrations` is kept.
-- Dropped at the end of the session.
+  in one statement with CASCADE; `schema_migrations` is kept. Tables outside
+  the `public` schema stop the run instead of being skipped.
+- Dropped at the end of the session, only after re-proving its identity.
 
 No existing database (development, `medibridge_test`, `medibridge_ci_test`)
-is read, modified or dropped. Every truncate and the final drop first prove
-the target is this session's database (see tests/db_safety.py).
+is read, modified or dropped (see tests/db_safety.py and
+tests/disposable_database.py).
 
 Configuration comes from `.env.test` (see `.env.test.example`) or, when that
-file is absent as in CI, from the process environment. The application's own
-`load_dotenv()` calls are disabled for the run, so the development `.env` can
-never supply a value.
+file is absent as in CI, from the process environment. Settings the file
+omits are removed from the environment, and the application's own
+`load_dotenv()` calls are disabled, so neither the development `.env` nor the
+shell can supply a value. The superuser override is accepted only from
+`.env.test`.
+
+tests/conftest.py refuses to run if this file was not loaded, for example
+when pytest is started from inside `tests/`.
 
 Limitation: if the process is killed (for example with SIGKILL), its
 database is left behind. Later runs report such databases but never delete
@@ -27,147 +34,111 @@ them.
 import os
 from pathlib import Path
 
-import psycopg
 import pytest
-from dotenv import dotenv_values
-from psycopg import sql
 
 from tests import db_safety
+from tests.disposable_database import DisposableDatabase
 
 ROOT = Path(__file__).resolve().parent
 TEST_ENV_FILE = ROOT / ".env.test"
 
+# Read by tests/conftest.py to prove this file ran first.
+ISOLATION_ATTRIBUTE = "_medibridge_database_isolation"
 
-CONFIG: db_safety.TestDatabaseConfig
-SESSION_DATABASE: str
-_report: dict = {"abandoned": [], "dropped": False}
+_state: dict = {"database": None, "config": None, "superuser": False, "abandoned": []}
 
 
+def _terminal(config):
+    return config.pluginmanager.get_plugin("terminalreporter")
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
     """
-    Validates the test configuration and points the application at the
-    session database. Runs before test collection, so before any application
-    module is imported (token_service, for example, reads the environment at
-    import time).
+    Validates the configuration and points the application at the session
+    database. Runs before collection, so before any application module is
+    imported (token_service reads the environment at import time).
     """
-    global CONFIG, SESSION_DATABASE
-
-    file_values = dotenv_values(TEST_ENV_FILE) if TEST_ENV_FILE.is_file() else None
-    settings = db_safety.resolve_settings(file_values, os.environ)
     try:
-        CONFIG = db_safety.validate_settings(settings)
+        file_values = db_safety.read_test_env_file(TEST_ENV_FILE)
+        settings = db_safety.resolve_settings(file_values, os.environ)
+        test_config = db_safety.validate_settings(settings)
     except db_safety.UnsafeTestDatabase as exc:
         raise pytest.UsageError(f"Unsafe test database configuration: {exc}") from None
 
-    os.environ.update(CONFIG.app_settings)
-    os.environ["PYTHON_DOTENV_DISABLED"] = "1"
-    SESSION_DATABASE = db_safety.new_database_name()
-    # Point the application at the disposable database before it exists, so a
-    # premature connection fails instead of reaching some other database.
-    os.environ["DB_NAME"] = SESSION_DATABASE
+    name = db_safety.new_database_name()
+    db_safety.register_session_database(name)
+    db_safety.apply_environment(os.environ, test_config, name)
+
+    _state["config"] = test_config
+    _state["database"] = DisposableDatabase(test_config, name)
+    setattr(config, ISOLATION_ATTRIBUTE, True)
 
 
-def _admin_connection() -> psycopg.Connection:
-    return psycopg.connect(**CONFIG.connect_kwargs(CONFIG.maintenance_db), autocommit=True)
+def _warn(config, message: str) -> None:
+    terminal = _terminal(config)
+    if terminal is not None:
+        terminal.write_sep("!", message, red=True, bold=True)
 
 
-class DisposableDatabase:
-    """The session database and the connection used to clean it."""
-
-    def __init__(self, name: str, connection: psycopg.Connection, tables: list[str]):
-        self.name = name
-        self.connection = connection
-        self.tables = tables
-        table_list = sql.SQL(", ").join(sql.Identifier(table) for table in tables)
-        self._truncate = sql.SQL("TRUNCATE {} CASCADE").format(table_list)
-        self._has_rows = sql.SQL("SELECT {}").format(
-            sql.SQL(" OR ").join(
-                sql.SQL("EXISTS (SELECT 1 FROM {})").format(sql.Identifier(table)) for table in tables
-            )
+def pytest_sessionstart(session):
+    if _state["config"] is not None and _state["config"].allow_superuser:
+        _warn(
+            session.config,
+            "WARNING: TEST_DB_ALLOW_SUPERUSER=1 in .env.test - tests may run as a PostgreSQL superuser",
         )
 
-    def clean(self) -> None:
-        """
-        Empties every application table. Failures are raised, never ignored.
 
-        TRUNCATE is skipped when every table is already empty, which is the
-        case for most tests. Ownership is verified either way.
-        """
-        db_safety.verify_ownership(self.connection, self.name, connected_to_it=True)
-        if self.connection.execute(self._has_rows).fetchone()[0]:
-            self.connection.execute(self._truncate)
-
-    def is_empty(self) -> bool:
-        return not self.connection.execute(self._has_rows).fetchone()[0]
+@pytest.fixture(scope="session")
+def test_database_config() -> db_safety.TestDatabaseConfig:
+    """The validated test configuration, for tests of the isolation machinery."""
+    return _state["config"]
 
 
-def _create_database() -> None:
-    with _admin_connection() as admin:
-        with admin.cursor() as cur:
-            cur.execute(
-                "SELECT rolsuper, rolcreatedb, pg_is_in_recovery() FROM pg_roles WHERE rolname = current_user"
-            )
-            is_superuser, can_create_db, in_recovery = cur.fetchone()
+@pytest.fixture(scope="session", autouse=True)
+def disposable_database(request):
+    database: DisposableDatabase = _state["database"]
+    setup_failed = False
+    try:
+        is_superuser, can_create_db, in_recovery = database.role_status()
         try:
             db_safety.check_role(
                 is_superuser=is_superuser,
                 can_create_db=can_create_db,
                 in_recovery=in_recovery,
-                allow_superuser=CONFIG.allow_superuser,
+                allow_superuser=_state["config"].allow_superuser,
             )
         except db_safety.UnsafeTestDatabase as exc:
             pytest.exit(f"Unsafe test database role: {exc}", returncode=4)
-        _report["superuser"] = is_superuser
-        _report["abandoned"] = db_safety.find_abandoned_databases(admin, SESSION_DATABASE)
-
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(SESSION_DATABASE)))
-        _report["created"] = True
-        admin.execute(
-            sql.SQL("COMMENT ON DATABASE {} IS {}").format(
-                sql.Identifier(SESSION_DATABASE), sql.Literal(db_safety.OWNERSHIP_MARKER)
+        if is_superuser:
+            _state["superuser"] = True
+            _warn(
+                request.config,
+                "WARNING: connected as a PostgreSQL SUPERUSER - creating the test database anyway "
+                "because .env.test allows it",
             )
-        )
+        _state["abandoned"] = database.abandoned_databases()
 
-
-def _drop_database() -> None:
-    if not _report.get("created"):
-        return
-    with _admin_connection() as admin:
-        db_safety.verify_ownership(admin, SESSION_DATABASE, connected_to_it=False)
-        admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(SESSION_DATABASE)))
-    _report["dropped"] = True
-
-
-@pytest.fixture(scope="session", autouse=True)
-def disposable_database():
-    _create_database()
-    cleanup_connection = None
-    try:
-        import migrate  # reads DB_NAME, which now names the disposable database
+        database.create()
+        import migrate  # reads DB_NAME, which names the disposable database
 
         migrate.apply_migrations()
-
-        cleanup_connection = psycopg.connect(
-            **CONFIG.connect_kwargs(SESSION_DATABASE), autocommit=True
-        )
-        # Fail fast instead of hanging if a test leaves a transaction open.
-        cleanup_connection.execute("SET lock_timeout = '5s'")
-        db_safety.verify_ownership(cleanup_connection, SESSION_DATABASE, connected_to_it=True)
-        with cleanup_connection.cursor() as cur:
-            cur.execute(
-                """
-                SELECT tablename FROM pg_tables
-                WHERE schemaname = 'public' AND tablename <> 'schema_migrations'
-                ORDER BY tablename
-                """
-            )
-            tables = [name for (name,) in cur.fetchall()]
-
-        yield DisposableDatabase(SESSION_DATABASE, cleanup_connection, tables)
+        database.open_cleanup_connection()
+        database.clean()  # also proves only supported tables exist
+    except BaseException:
+        setup_failed = True
+        raise
     finally:
-        if cleanup_connection is not None:
-            cleanup_connection.close()
-        _drop_database()
+        if setup_failed:
+            # Setup failed part-way: drop only if identity can be proven.
+            try:
+                database.drop()
+            except Exception:
+                pass  # recorded in database.drop_error and reported in the summary
+
+    yield database
+
+    database.drop()
 
 
 @pytest.fixture(autouse=True)
@@ -179,23 +150,28 @@ def isolated_database(disposable_database):
 
 
 def pytest_terminal_summary(terminalreporter):
-    if "SESSION_DATABASE" not in globals():
+    database: DisposableDatabase | None = _state["database"]
+    if database is None:
         return  # configuration was rejected before a name was chosen
     terminalreporter.write_sep("-", "disposable test database")
-    if not _report.get("created"):
+    if not database.create_attempted:
         status = "not created"
-    elif _report["dropped"]:
+    elif database.dropped:
         status = "dropped"
     else:
-        status = "NOT DROPPED - remove it manually after checking it is a disposable test database"
-    terminalreporter.write_line(f"{SESSION_DATABASE}: {status}")
-    if _report.get("superuser"):
+        status = "NOT DROPPED - inspect it, and drop it manually only if it is a disposable test database"
+    terminalreporter.write_line(f"{database.name}: {status}")
+    if database.drop_error:
+        terminalreporter.write_line(f"drop refused or failed: {database.drop_error}", red=True)
+    if _state["superuser"]:
         terminalreporter.write_line(
-            "WARNING: tests ran as a PostgreSQL superuser (TEST_DB_ALLOW_SUPERUSER=1). "
-            "Use a dedicated LOGIN CREATEDB role instead."
+            "WARNING: tests ran as a PostgreSQL superuser (TEST_DB_ALLOW_SUPERUSER=1 in .env.test). "
+            "Use a dedicated LOGIN CREATEDB role instead.",
+            red=True,
         )
-    if _report["abandoned"]:
+    if _state["abandoned"]:
         terminalreporter.write_line(
             "WARNING: disposable databases from earlier interrupted runs still exist "
-            "(not deleted automatically): " + ", ".join(_report["abandoned"])
+            "(not deleted automatically): " + ", ".join(_state["abandoned"]),
+            yellow=True,
         )

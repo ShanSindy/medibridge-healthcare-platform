@@ -7,7 +7,7 @@ from models import Patient
 from fhir import patient_to_fhir
 from fhir import create_operation_outcome
 from database import get_connection
-from db_safety import is_disposable_name
+from tests.db_safety import is_session_database
 import pytest
 from auth_dependencies import get_current_user
 from user_service import create_user, get_user_by_username
@@ -21,7 +21,7 @@ def authenticated_admin():
     original_overrides = app.dependency_overrides.copy()
 
     with get_connection() as conn:
-        if not is_disposable_name(conn.info.dbname):
+        if not is_session_database(conn.info.dbname):
             raise RuntimeError(
                 "Test administrator setup requires the disposable test database."
             )
@@ -184,7 +184,7 @@ def test_database_isolation():
             database_name = cursor.fetchone()[0]
 
     # The suite runs against this session's disposable database, never a shared one.
-    assert is_disposable_name(database_name)
+    assert is_session_database(database_name)
     assert database_name == os.environ["DB_NAME"]
 
 

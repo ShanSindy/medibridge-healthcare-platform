@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from auth_dependencies import get_current_user
 from database import get_connection
-from db_safety import is_disposable_name
+from tests.db_safety import is_session_database
 from main import app
 
 # raise_server_exceptions=False so an unhandled error shows up as a 500
@@ -25,7 +25,7 @@ MISSING_ID = 2_000_000_000
 
 
 def _require_test_database(conn) -> None:
-    if not is_disposable_name(conn.info.dbname):
+    if not is_session_database(conn.info.dbname):
         raise RuntimeError("Integrity tests must run against the disposable test database.")
 
 
