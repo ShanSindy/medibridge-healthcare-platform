@@ -53,5 +53,20 @@ jobs:
       - name: Apply database migrations
         run: python migrate.py
 
+      # The tests create and drop their own disposable database, so they run
+      # as a role with only LOGIN and CREATEDB, not as the container superuser.
+      # Test-only credentials for the throwaway CI container.
+      - name: Create least-privileged test role
+        env:
+          PGPASSWORD: ci_test_password
+        run: >-
+          psql -h localhost -U medibridge -d postgres -v ON_ERROR_STOP=1
+          -c "CREATE ROLE medibridge_tester LOGIN CREATEDB NOSUPERUSER NOCREATEROLE
+          PASSWORD 'ci_tester_password_not_for_production'"
+
       - name: Run automated tests
+        env:
+          MEDIBRIDGE_ENV: test
+          DB_USER: medibridge_tester
+          DB_PASSWORD: ci_tester_password_not_for_production
         run: python -m pytest -q --tb=short
