@@ -1,0 +1,8 @@
+# Quality and security tooling for development and CI.
+# Installs the runtime and test dependencies too: pip install -r requirements-dev.txt
+-r requirements.txt
+
+ruff==0.17.6
+pytest-cov==7.1.0
+coverage==7.17.3
+pip-audit==2.10.1

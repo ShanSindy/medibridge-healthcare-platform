@@ -1,0 +1,59 @@
+# Tool configuration only. MediBridge is not packaged; dependencies are pinned
+# in requirements.txt (runtime and tests) and requirements-dev.txt (quality tools).
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes: unused/undefined names, redefinitions
+    "I",    # import ordering
+    "B",    # bugbear: likely bugs and design problems
+    "UP",   # syntax for the target Python version
+    "SIM",  # simplifications
+    "C4",   # comprehensions
+    "PIE",  # misc. unnecessary code
+    "RUF",  # Ruff-specific correctness checks
+    "T20",  # stray print() calls
+    "PT",   # pytest usage
+    "S",    # security (bandit)
+]
+ignore = [
+    # Nested `with get_connection() as conn:` / `with conn.cursor() as cur:`
+    # blocks read more clearly than one combined `with` statement.
+    "SIM117",
+    # Tuple vs. comma-string parametrize names is style only.
+    "PT006",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# assert is how pytest checks; passwords in tests are synthetic fixtures.
+"tests/**" = ["S101", "S105", "S106"]
+# Printing progress is the purpose of the migration command.
+"migrate.py" = ["T201"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency markers are designed to be used as default arguments.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Form", "fastapi.Body"]
+
+[tool.coverage.run]
+branch = true
+# Measures every Python file in the repository (application modules,
+# migrate.py, conftest.py and the test-database safety code under tests/),
+# including files no test imports, which then count as uncovered.
+source = ["."]
+omit = [
+    "tests/test_*.py",  # the test cases themselves
+    "scripts/*",        # CI reporting utilities
+    ".venv/*",
+    "frontend/*",
+]
+
+[tool.coverage.report]
+# Combined line + branch coverage. Baseline measured before enforcement: 87.0%.
+fail_under = 85
+show_missing = true
+precision = 1
