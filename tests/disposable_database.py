@@ -38,7 +38,8 @@ class DisposableDatabase:
         """(is_superuser, can_create_db, in_recovery) for the configured role."""
         with self.admin_connection() as admin:
             return admin.execute(
-                "SELECT rolsuper, rolcreatedb, pg_is_in_recovery() FROM pg_roles WHERE rolname = current_user"
+                "SELECT rolsuper, rolcreatedb, pg_is_in_recovery() "
+                "FROM pg_roles WHERE rolname = current_user"
             ).fetchone()
 
     def abandoned_databases(self) -> list[str]:

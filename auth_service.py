@@ -3,7 +3,6 @@ from argon2 import PasswordHasher
 from security import verify_password
 from user_service import get_user_by_username
 
-
 # Used when an account does not exist, so password verification
 # still performs an Argon2 operation.
 _dummy_hasher = PasswordHasher()

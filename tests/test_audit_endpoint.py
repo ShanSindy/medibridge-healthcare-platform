@@ -1,10 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from main import app
 from auth_dependencies import get_current_user
-from audit_service import get_audit_logs
-
+from main import app
 
 client = TestClient(app)
 

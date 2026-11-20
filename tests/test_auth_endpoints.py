@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
-from token_service import create_access_token
-from main import app
 
+from main import app
+from token_service import create_access_token
 
 client = TestClient(app)
 

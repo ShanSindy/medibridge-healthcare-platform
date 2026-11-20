@@ -1,13 +1,11 @@
+import pytest
 from fastapi.testclient import TestClient
 from psycopg.errors import ExclusionViolation
-import main
 
+import main
+from auth_dependencies import get_current_user
 
 client = TestClient(main.app)
-
-
-import pytest
-from auth_dependencies import get_current_user
 
 
 @pytest.fixture(autouse=True)

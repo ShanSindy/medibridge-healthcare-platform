@@ -90,7 +90,8 @@ def test_unrecorded_identity_means_the_database_is_not_dropped(
 
     with pytest.raises(RuntimeError, match="simulated"):
         scratch.create()
-    assert scratch.create_attempted and scratch.created is None
+    assert scratch.create_attempted
+    assert scratch.created is None
 
     with pytest.raises(db_safety.UnsafeTestDatabase, match="ownership cannot be established"):
         scratch.drop()
@@ -152,7 +153,7 @@ def test_tables_outside_the_supported_schema_stop_cleanup(scratch):
     conn.execute("CREATE SCHEMA reporting")
     conn.execute("CREATE TABLE reporting.synthetic_summary (id integer)")
 
-    with pytest.raises(db_safety.UnsafeTestDatabase, match="reporting.synthetic_summary"):
+    with pytest.raises(db_safety.UnsafeTestDatabase, match=r"reporting\.synthetic_summary"):
         scratch.clean()
 
     # Nothing was truncated: the run stops instead of cleaning partially.

@@ -1,5 +1,6 @@
 from datetime import date, datetime
-from typing import Optional, Literal
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -36,17 +37,12 @@ class PatientCreate(BaseModel):
         return value
 
 
-from pydantic import EmailStr, Field, field_validator
-from typing import Optional
-from datetime import datetime
-
-
 class ProviderCreate(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
     specialty: str = Field(min_length=1, max_length=150)
-    email: Optional[str] = Field(default=None, max_length=255)
-    phone: Optional[str] = Field(default=None, max_length=30)
+    email: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=30)
 
     @field_validator("first_name", "last_name", "specialty")
     @classmethod
@@ -60,7 +56,7 @@ class ProviderCreate(BaseModel):
 
     @field_validator("email")
     @classmethod
-    def validate_email(cls, value: Optional[str]) -> Optional[str]:
+    def validate_email(cls, value: str | None) -> str | None:
         if value is None:
             return None
 
@@ -85,7 +81,7 @@ class AppointmentCreate(BaseModel):
     provider_id: int = Field(gt=0)
     starts_at: datetime
     ends_at: datetime
-    reason: Optional[str] = Field(default=None, max_length=500)
+    reason: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def validate_appointment_times(self):
@@ -108,7 +104,7 @@ class AppointmentUpdate(BaseModel):
     starts_at: datetime
     ends_at: datetime
     status: Literal["scheduled", "completed", "cancelled"]
-    reason: Optional[str] = Field(default=None, max_length=500)
+    reason: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def validate_appointment_times(self):

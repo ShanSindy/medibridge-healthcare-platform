@@ -7,15 +7,16 @@ behaviour comes from PostgreSQL constraints. Every row created here is synthetic
 is removed again in the fixture teardown.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg import sql
 
 from auth_dependencies import get_current_user
 from database import get_connection
-from tests.db_safety import is_session_database
 from main import app
+from tests.db_safety import is_session_database
 
 # raise_server_exceptions=False so an unhandled error shows up as a 500
 # response instead of aborting the test.
@@ -86,7 +87,7 @@ def records():
         return provider_id
 
     def add_appointment(patient_id: int, provider_id: int) -> int:
-        starts_at = datetime(2031, 1, 6, 9, 0, tzinfo=timezone.utc)
+        starts_at = datetime(2031, 1, 6, 9, 0, tzinfo=UTC)
         with get_connection() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -131,7 +132,10 @@ def _count(table: str, column: str, value: int) -> int:
     assert table in {"appointments", "patients", "providers"}
     assert column in {"id", "patient_id", "provider_id"}
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT count(*) FROM {table} WHERE {column} = %s", (value,))
+        query = sql.SQL("SELECT count(*) FROM {} WHERE {} = %s").format(
+            sql.Identifier(table), sql.Identifier(column)
+        )
+        cur.execute(query, (value,))
         return cur.fetchone()[0]
 
 

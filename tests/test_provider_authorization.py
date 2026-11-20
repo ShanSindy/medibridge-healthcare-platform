@@ -1,11 +1,10 @@
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from main import app
 from token_service import create_access_token
-
 
 client = TestClient(app)
 
@@ -35,7 +34,7 @@ def test_authenticated_roles_can_read_providers(
 
     monkeypatch.setattr(
         "main.get_all_providers",
-        lambda: [],
+        list,
     )
 
     token = create_access_token(1)
@@ -127,7 +126,7 @@ def test_admin_can_manage_providers(
         lambda provider: {
             "id": 1,
             **provider.model_dump(),
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         },
     )
 
@@ -137,7 +136,7 @@ def test_admin_can_manage_providers(
         lambda provider_id, provider: {
             "id": provider_id,
             **provider.model_dump(),
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         },
     )
 

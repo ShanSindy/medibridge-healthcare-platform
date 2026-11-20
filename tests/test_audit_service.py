@@ -31,6 +31,7 @@ def test_get_audit_logs_returns_records():
     for column, description in zip(
         columns,
         mock_cursor.description,
+        strict=True,
     ):
         description.name = column
 
@@ -78,7 +79,9 @@ def test_get_audit_logs_rejects_invalid_pagination(
     offset,
 ):
     with patch("audit_service.get_connection") as mock_connection:
-        with pytest.raises(ValueError):
+        with pytest.raises(
+            ValueError, match=r"^(limit must be between 1 and 100|offset must be non-negative)$"
+        ):
             get_audit_logs(limit=limit, offset=offset)
 
         mock_connection.assert_not_called()

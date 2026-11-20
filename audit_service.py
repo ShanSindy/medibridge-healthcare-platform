@@ -34,4 +34,4 @@ def get_audit_logs(
 
             columns = [column.name for column in cursor.description]
 
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            return [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]

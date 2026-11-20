@@ -258,7 +258,7 @@ def test_patient_creation_rolls_back_after_real_audit_failure():
     marker = str(uuid.uuid4())
     patient_id = None
 
-    with pytest.raises(ValueError, match="Audit outcome"):
+    with pytest.raises(ValueError, match="Audit outcome"):  # noqa: PT012 - the whole transaction must be inside the block to prove it rolls back
         with get_connection() as conn:
             if not is_session_database(conn.info.dbname):
                 raise RuntimeError("Integration tests must use the disposable test database.")
@@ -313,12 +313,13 @@ def test_patient_creation_rolls_back_after_real_audit_failure():
 
 def test_patient_creation_rolls_back_on_audit_constraint_violation():
     import uuid
+
     import psycopg
 
     marker = str(uuid.uuid4())
     patient_id = None
 
-    with pytest.raises(psycopg.errors.CheckViolation):
+    with pytest.raises(psycopg.errors.CheckViolation):  # noqa: PT012 - the whole transaction must be inside the block to prove it rolls back
         with get_connection() as conn:
             if not is_session_database(conn.info.dbname):
                 raise RuntimeError("Integration tests must use the disposable test database.")

@@ -1,14 +1,15 @@
 import os
 from datetime import date
+
+import pytest
 from fastapi.testclient import TestClient
+
+from auth_dependencies import get_current_user
+from database import get_connection
+from fhir import create_operation_outcome, patient_to_fhir
 from main import app
 from models import Patient
-from fhir import patient_to_fhir
-from fhir import create_operation_outcome
-from database import get_connection
 from tests.db_safety import is_session_database
-import pytest
-from auth_dependencies import get_current_user
 from user_service import create_user, get_user_by_username
 
 client = TestClient(app)

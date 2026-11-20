@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 
@@ -24,9 +24,9 @@ def test_reject_invalid_signature():
     token = jwt.encode(
         {
             "sub": "1",
-            "iat": datetime.now(timezone.utc),
-            "nbf": datetime.now(timezone.utc),
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=30),
+            "iat": datetime.now(UTC),
+            "nbf": datetime.now(UTC),
+            "exp": datetime.now(UTC) + timedelta(minutes=30),
             "type": "access",
         },
         "another-independent-test-signing-key-with-sufficient-length",
@@ -37,7 +37,7 @@ def test_reject_invalid_signature():
 
 
 def test_reject_expired_token():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     token = jwt.encode(
         {
@@ -59,7 +59,7 @@ def test_reject_malformed_token():
 
 
 def test_reject_wrong_token_type():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     token = jwt.encode(
         {
@@ -77,7 +77,7 @@ def test_reject_wrong_token_type():
 
 
 def test_reject_invalid_user_id():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     token = jwt.encode(
         {
@@ -95,7 +95,7 @@ def test_reject_invalid_user_id():
 
 
 def test_reject_missing_required_claim():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     token = jwt.encode(
         {

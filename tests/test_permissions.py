@@ -86,7 +86,7 @@ def test_only_admin_can_manage_users():
 
 
 def test_unknown_permission_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Unknown permission: unknown:permission"):
         require_permission("unknown:permission")
 
 
@@ -100,11 +100,6 @@ def test_permission_configuration():
         "admin",
         "scheduler",
     )
-
-
-import pytest
-
-from permissions import get_allowed_roles
 
 
 def test_audit_read_permission_is_admin_only():

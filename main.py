@@ -2,21 +2,19 @@ from typing import Literal
 from urllib.parse import urlencode
 
 from fastapi import (
+    Depends,
     FastAPI,
+    Form,
     HTTPException,
     Query,
     Request,
-    Body,
-    Depends,
-    Form,
     status,
 )
-from fastapi.responses import JSONResponse, Response
-from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import (
     request_validation_exception_handler,
 )
-
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
 from psycopg.errors import (
     ExclusionViolation,
     ForeignKeyViolation,
@@ -24,68 +22,60 @@ from psycopg.errors import (
     UniqueViolation,
 )
 
-from db_errors import raise_for_constraint
-
-from database import (
-    get_connection,
-    get_patient_identifiers,
-    get_identifiers_for_patients,
-)
-
-from models import (
-    Patient,
-    PatientCreate,
-    Provider,
-    ProviderCreate,
-    Appointment,
-    AppointmentCreate,
-    AppointmentUpdate,
-)
-
-from fhir import (
-    patient_to_fhir,
-    provider_to_fhir,
-    provider_to_practitioner_role,
-    create_operation_outcome,
-)
-
-from hl7_service import (
-    register_patient_from_hl7,
-    update_patient_from_hl7,
-)
-from hl7_parser import parse_hl7_message
-from hl7_ack import generate_hl7_ack
-
-from provider_service import (
-    create_provider,
-    get_all_providers,
-    get_provider_by_id,
-    update_provider,
-    delete_provider,
-)
-
 from appointment_service import (
+    cancel_appointment,
     create_appointment,
     get_all_appointments,
     get_appointment_by_id,
     update_appointment,
-    cancel_appointment,
 )
-
-from auth_dependencies import (
-    get_current_user,
-    require_roles,
-    require_permission,
-)
-from auth_service import authenticate_user
-from token_service import (
-    create_access_token,
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
-)
-
 from audit import log_audit_event
 from audit_service import get_audit_logs
-
+from auth_dependencies import (
+    get_current_user,
+    require_permission,
+    require_roles,
+)
+from auth_service import authenticate_user
+from database import (
+    get_connection,
+    get_identifiers_for_patients,
+    get_patient_identifiers,
+)
+from db_errors import raise_for_constraint
+from fhir import (
+    create_operation_outcome,
+    patient_to_fhir,
+    provider_to_fhir,
+    provider_to_practitioner_role,
+)
+from hl7_ack import generate_hl7_ack
+from hl7_parser import parse_hl7_message
+from hl7_service import (
+    register_patient_from_hl7,
+    update_patient_from_hl7,
+)
+from models import (
+    Appointment,
+    AppointmentCreate,
+    AppointmentUpdate,
+    Patient,
+    PatientCreate,
+    Provider,
+    ProviderCreate,
+)
+from provider_service import (
+    create_provider,
+    delete_provider,
+    get_all_providers,
+    get_provider_by_id,
+    search_providers,
+    update_provider,
+)
+from token_service import (
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
+    create_access_token,
+)
 
 app = FastAPI()
 
@@ -378,7 +368,8 @@ def get_fhir_metadata():
         "publisher": "MediBridge Healthcare Platform",
         "description": (
             "MediBridge is a healthcare interoperability platform "
-            "providing FHIR R4 Patient, Practitioner, and PractitionerRole resource access and search."
+            "providing FHIR R4 Patient, Practitioner, and PractitionerRole "
+            "resource access and search."
         ),
         "kind": "instance",
         "software": {"name": "MediBridge Healthcare Platform", "version": "0.1.0"},
@@ -550,6 +541,8 @@ def get_fhir_patients(
     with get_connection() as conn:
         with conn.cursor() as cursor:
             # Retrieve one page of matching patients.
+            # S608 reviewed: the WHERE clause is assembled only from fixed SQL fragments in this
+            # function, and every user-supplied value is passed separately as a %s parameter.
             cursor.execute(
                 f"""
                 SELECT
@@ -562,18 +555,20 @@ def get_fhir_patients(
                 {where_clause}
                 ORDER BY p.id
                 LIMIT %s OFFSET %s
-                """,
+                """,  # noqa: S608
                 (*params, count, offset),
             )
             rows = cursor.fetchall()
 
             # Count all matches before pagination.
+            # S608 reviewed: the WHERE clause is assembled only from fixed SQL fragments in this
+            # function, and every user-supplied value is passed separately as a %s parameter.
             cursor.execute(
                 f"""
                 SELECT COUNT(*)
                 FROM patients p
                 {where_clause}
-                """,
+                """,  # noqa: S608
                 tuple(params),
             )
             total_matches = cursor.fetchone()[0]
@@ -999,9 +994,6 @@ def get_fhir_practitioner(practitioner_id: int):
         )
 
     return JSONResponse(content=provider_to_fhir(provider), media_type="application/fhir+json")
-
-
-from provider_service import search_providers
 
 
 @app.get(

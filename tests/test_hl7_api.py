@@ -1,9 +1,10 @@
 from unittest.mock import patch
-from fastapi.testclient import TestClient
-from main import app
-import pytest
-from auth_dependencies import get_current_user
 
+import pytest
+from fastapi.testclient import TestClient
+
+from auth_dependencies import get_current_user
+from main import app
 
 client = TestClient(app)
 
@@ -122,8 +123,9 @@ def test_hl7_adt_endpoint_returns_ack():
     from uuid import uuid4
 
     from fastapi.testclient import TestClient
-    from main import app
+
     from database import get_connection
+    from main import app
 
     client = TestClient(app)
 
@@ -180,6 +182,7 @@ def test_hl7_adt_endpoint_returns_rejection_ack():
     from uuid import uuid4
 
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)
@@ -209,8 +212,9 @@ def test_hl7_adt_endpoint_duplicate_returns_ack():
     from uuid import uuid4
 
     from fastapi.testclient import TestClient
-    from main import app
+
     from database import get_connection
+    from main import app
 
     client = TestClient(app)
 
@@ -292,6 +296,7 @@ def test_hl7_adt_endpoint_returns_application_error_ack(monkeypatch):
     from uuid import uuid4
 
     from fastapi.testclient import TestClient
+
     import main
 
     client = TestClient(main.app)
@@ -329,6 +334,7 @@ def test_hl7_adt_endpoint_defaults_to_json(monkeypatch):
     from uuid import uuid4
 
     from fastapi.testclient import TestClient
+
     import main
 
     control_id = f"JSONTEST-{uuid4().hex}"
@@ -356,6 +362,7 @@ def test_hl7_adt_endpoint_defaults_to_json(monkeypatch):
 
 def test_hl7_adt_endpoint_malformed_message_with_ack_requested():
     from fastapi.testclient import TestClient
+
     from main import app
 
     client = TestClient(app)

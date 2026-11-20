@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 
@@ -29,7 +29,7 @@ def generate_hl7_ack(
     original_message_type = msh[8].split("^")
     trigger_event = original_message_type[1] if len(original_message_type) > 1 else ""
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     ack_control_id = str(uuid4())
 
     sending_application = msh[2] if len(msh) > 2 else ""

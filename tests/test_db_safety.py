@@ -145,7 +145,7 @@ def test_superuser_override_requires_exactly_1():
 )
 def test_superuser_override_from_the_environment_is_rejected(file_values):
     shell = {**VALID, "TEST_DB_ALLOW_SUPERUSER": "1"}
-    with pytest.raises(UnsafeTestDatabase, match="only accepted from the local .env.test"):
+    with pytest.raises(UnsafeTestDatabase, match=r"only accepted from the local \.env\.test"):
         resolve_settings(file_values, shell)
 
 
@@ -185,7 +185,7 @@ def test_optional_settings_defined_in_the_file_are_used():
 
 
 def test_every_connection_setting_ends_up_from_the_file_or_absent():
-    shell = {key: "from-shell" for key in CONNECTION_KEYS}
+    shell = dict.fromkeys(CONNECTION_KEYS, "from-shell")
     environ = _apply(dict(VALID), shell)
     for key in CONNECTION_KEYS:
         assert environ.get(key) == VALID.get(key), key
@@ -371,7 +371,7 @@ def test_cleanup_targets_are_public_tables_except_migration_metadata():
 
 def test_tables_outside_the_supported_schema_stop_the_run():
     rows = [("public", "patients"), ("reporting", "patient_summary")]
-    with pytest.raises(UnsafeTestDatabase, match="reporting.patient_summary"):
+    with pytest.raises(UnsafeTestDatabase, match=r"reporting\.patient_summary"):
         cleanup_targets(rows)
 
 

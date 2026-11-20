@@ -36,8 +36,16 @@ ignore = [
 "migrate.py" = ["T201"]
 
 [tool.ruff.lint.flake8-bugbear]
-# FastAPI's dependency markers are designed to be used as default arguments.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Form", "fastapi.Body"]
+# FastAPI's dependency markers are designed to be used as default arguments, and
+# require_permission()/require_roles() deliberately build the dependency once, at import.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Form",
+    "fastapi.Body",
+    "auth_dependencies.require_permission",
+    "auth_dependencies.require_roles",
+]
 
 [tool.coverage.run]
 branch = true

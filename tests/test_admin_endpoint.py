@@ -3,7 +3,6 @@ from fastapi.testclient import TestClient
 from main import app
 from token_service import create_access_token
 
-
 client = TestClient(app)
 
 

@@ -47,7 +47,7 @@ def create_appointment(appointment: AppointmentCreate) -> dict:
                 "created_at",
             ]
 
-            return dict(zip(columns, row))
+            return dict(zip(columns, row, strict=True))
 
 
 def get_all_appointments(
@@ -101,7 +101,7 @@ def get_all_appointments(
             cur.execute(query, tuple(values))
             rows = cur.fetchall()
 
-            return [dict(zip(columns, row)) for row in rows]
+            return [dict(zip(columns, row, strict=True)) for row in rows]
 
 
 def get_appointment_by_id(appointment_id: int) -> dict | None:
@@ -138,7 +138,7 @@ def get_appointment_by_id(appointment_id: int) -> dict | None:
             if row is None:
                 return None
 
-            return dict(zip(columns, row))
+            return dict(zip(columns, row, strict=True))
 
 
 def update_appointment(
@@ -191,7 +191,7 @@ def update_appointment(
             if row is None:
                 return None
 
-            return dict(zip(columns, row))
+            return dict(zip(columns, row, strict=True))
 
 
 def cancel_appointment(appointment_id: int) -> dict | None:
@@ -229,4 +229,4 @@ def cancel_appointment(appointment_id: int) -> dict | None:
             if row is None:
                 return None
 
-            return dict(zip(columns, row))
+            return dict(zip(columns, row, strict=True))

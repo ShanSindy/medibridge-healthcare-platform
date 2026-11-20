@@ -1,8 +1,11 @@
-from uuid import uuid4
-from database import get_connection
-from hl7_service import register_patient_from_hl7, update_patient_from_hl7, HL7_MRN_SYSTEM
-import pytest
 from unittest.mock import patch
+from uuid import uuid4
+
+import psycopg
+import pytest
+
+from database import get_connection
+from hl7_service import HL7_MRN_SYSTEM, register_patient_from_hl7, update_patient_from_hl7
 
 
 def test_register_patient_from_hl7():
@@ -154,7 +157,7 @@ def test_register_patient_from_hl7_transaction_rollback():
 
     # Force the identifier insertion to fail.
     with patch("hl7_service.HL7_MRN_SYSTEM", None):
-        with pytest.raises(Exception):
+        with pytest.raises(psycopg.errors.NotNullViolation):
             register_patient_from_hl7(message)
 
     # Confirm neither record was committed.
@@ -313,7 +316,7 @@ def test_update_patient_from_hl7_unknown_mrn():
             )
             assert cur.fetchone()[0] == 0
 
-    with pytest.raises(ValueError, match="Cannot update patient: MRN not found."):
+    with pytest.raises(ValueError, match=r"Cannot update patient: MRN not found\."):
         update_patient_from_hl7(message)
 
     with get_connection() as conn:
@@ -515,7 +518,7 @@ def test_update_patient_from_hl7_tracking_rollback():
     )
 
     # Updating an unknown MRN must fail.
-    with pytest.raises(ValueError, match="Cannot update patient: MRN not found."):
+    with pytest.raises(ValueError, match=r"Cannot update patient: MRN not found\."):
         update_patient_from_hl7(message)
 
     # The failed transaction must not retain the message.

@@ -235,6 +235,8 @@ def search_providers(
 
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # S608 reviewed: the WHERE clause is assembled only from fixed SQL fragments in this
+            # function, and every user-supplied value is passed separately as a %s parameter.
             cur.execute(
                 f"""
                 SELECT
@@ -244,17 +246,18 @@ def search_providers(
                 {where_clause}
                 ORDER BY id
                 LIMIT %s OFFSET %s
-                """,
+                """,  # noqa: S608
                 (*params, count, offset),
             )
             rows = cur.fetchall()
 
+            # S608 reviewed: same fixed WHERE fragments and parameters as above.
             cur.execute(
                 f"""
                 SELECT COUNT(*)
                 FROM providers
                 {where_clause}
-                """,
+                """,  # noqa: S608
                 tuple(params),
             )
             total = cur.fetchone()[0]

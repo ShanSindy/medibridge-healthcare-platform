@@ -1,10 +1,11 @@
+import pytest
+
 from hl7_parser import (
-    parse_hl7_message,
     extract_hl7_message_metadata,
     extract_patient_from_pid,
+    parse_hl7_message,
     process_hl7_adt_message,
 )
-import pytest
 
 
 def test_parse_hl7_adt_a04():
@@ -112,8 +113,6 @@ def test_parse_unsupported_hl7_message_type():
     with pytest.raises(
         ValueError, match=r"Unsupported HL7 message type\. Expected ADT\^A04 or ADT\^A08\."
     ):
-        parse_hl7_message(message)
-
         parse_hl7_message(message)
 
 
@@ -226,6 +225,7 @@ def test_extract_hl7_message_metadata_missing_sender(
 
 def test_parse_hl7_message_rejects_duplicate_msh():
     import pytest
+
     from hl7_parser import parse_hl7_message
 
     message = (
@@ -244,6 +244,7 @@ def test_parse_hl7_message_rejects_duplicate_msh():
 
 def test_parse_hl7_message_requires_msh_first():
     import pytest
+
     from hl7_parser import parse_hl7_message
 
     message = (
@@ -255,9 +256,6 @@ def test_parse_hl7_message_requires_msh_first():
 
     with pytest.raises(ValueError, match="HL7 message must begin with an MSH segment"):
         parse_hl7_message(message)
-
-
-import pytest
 
 
 @pytest.mark.parametrize(
@@ -285,6 +283,7 @@ def test_parse_hl7_message_rejects_invalid_segment_names(invalid_segment):
 
 def test_parse_hl7_message_rejects_duplicate_pid():
     import pytest
+
     from hl7_parser import parse_hl7_message
 
     message = (

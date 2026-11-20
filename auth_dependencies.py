@@ -1,9 +1,11 @@
+from collections.abc import Callable
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from permissions import get_allowed_roles
 from token_service import verify_access_token
 from user_service import get_user_by_id
-from collections.abc import Callable
-from permissions import get_allowed_roles
 
 bearer_scheme = HTTPBearer(auto_error=False)
 

@@ -111,7 +111,7 @@ def test_log_audit_event_rejects_invalid_outcome(
         unexpected_connection,
     )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Audit outcome must be"):
         audit.log_audit_event(
             action="patient.create",
             resource_type="patient",

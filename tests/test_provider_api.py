@@ -1,16 +1,13 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
+from auth_dependencies import get_current_user
 from main import app
 
-
 client = TestClient(app)
-
-
-import pytest
-from auth_dependencies import get_current_user
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +36,7 @@ def sample_provider():
         "specialty": "Neurology",
         "email": "emily.carter@example.com",
         "phone": "615-555-0199",
-        "created_at": datetime(2026, 11, 10, 16, 20, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 11, 10, 16, 20, tzinfo=UTC),
     }
 
 
@@ -167,7 +164,7 @@ def test_get_all_providers_success():
             "specialty": "Dermatology",
             "email": "michael.reed@example.com",
             "phone": "615-555-0123",
-            "created_at": datetime(2026, 11, 10, 17, 0, tzinfo=timezone.utc),
+            "created_at": datetime(2026, 11, 10, 17, 0, tzinfo=UTC),
         },
     ]
 

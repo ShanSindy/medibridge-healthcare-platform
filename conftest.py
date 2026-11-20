@@ -31,6 +31,7 @@ database is left behind. Later runs report such databases but never delete
 them.
 """
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -85,7 +86,8 @@ def pytest_sessionstart(session):
     if _state["config"] is not None and _state["config"].allow_superuser:
         _warn(
             session.config,
-            "WARNING: TEST_DB_ALLOW_SUPERUSER=1 in .env.test - tests may run as a PostgreSQL superuser",
+            "WARNING: TEST_DB_ALLOW_SUPERUSER=1 in .env.test - "
+            "tests may run as a PostgreSQL superuser",
         )
 
 
@@ -130,11 +132,11 @@ def disposable_database(request):
         raise
     finally:
         if setup_failed:
-            # Setup failed part-way: drop only if identity can be proven.
-            try:
+            # Setup failed part-way: drop only if identity can be proven. A drop
+            # failure is recorded in database.drop_error and shown in the summary,
+            # and must not hide the setup error that is propagating.
+            with contextlib.suppress(Exception):
                 database.drop()
-            except Exception:
-                pass  # recorded in database.drop_error and reported in the summary
 
     yield database
 
@@ -159,13 +161,17 @@ def pytest_terminal_summary(terminalreporter):
     elif database.dropped:
         status = "dropped"
     else:
-        status = "NOT DROPPED - inspect it, and drop it manually only if it is a disposable test database"
+        status = (
+            "NOT DROPPED - inspect it, and drop it manually only if it is a "
+            "disposable test database"
+        )
     terminalreporter.write_line(f"{database.name}: {status}")
     if database.drop_error:
         terminalreporter.write_line(f"drop refused or failed: {database.drop_error}", red=True)
     if _state["superuser"]:
         terminalreporter.write_line(
-            "WARNING: tests ran as a PostgreSQL superuser (TEST_DB_ALLOW_SUPERUSER=1 in .env.test). "
+            "WARNING: tests ran as a PostgreSQL superuser "
+            "(TEST_DB_ALLOW_SUPERUSER=1 in .env.test). "
             "Use a dedicated LOGIN CREATEDB role instead.",
             red=True,
         )

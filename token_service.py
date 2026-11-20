@@ -1,9 +1,8 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from dotenv import load_dotenv
-
 
 load_dotenv()
 
@@ -21,7 +20,7 @@ if JWT_ACCESS_TOKEN_EXPIRE_MINUTES <= 0:
 def create_access_token(user_id: int) -> str:
     """Create a signed JWT access token for a user."""
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires_at = now + timedelta(minutes=JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
 
     payload = {

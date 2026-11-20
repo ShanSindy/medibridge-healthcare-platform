@@ -1,11 +1,10 @@
 from database import get_connection
 from hl7_parser import (
+    extract_hl7_message_metadata,
     parse_hl7_message,
     process_hl7_adt_message,
-    extract_hl7_message_metadata,
 )
 from hl7_tracking import record_hl7_message
-
 
 HL7_MRN_SYSTEM = "https://medibridge.example.org/mrn"
 
