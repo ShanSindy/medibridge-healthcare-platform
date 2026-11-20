@@ -2,8 +2,8 @@
 Regression tests: database integrity violations must become clear API
 errors (404 / 409), never HTTP 500.
 
-These run against the real medibridge_test database because the behaviour
-comes from PostgreSQL constraints. Every row created here is synthetic and
+These run against the session's disposable PostgreSQL database because the
+behaviour comes from PostgreSQL constraints. Every row created here is synthetic and
 is removed again in the fixture teardown.
 """
 
@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from auth_dependencies import get_current_user
 from database import get_connection
+from db_safety import is_disposable_name
 from main import app
 
 # raise_server_exceptions=False so an unhandled error shows up as a 500
@@ -24,8 +25,8 @@ MISSING_ID = 2_000_000_000
 
 
 def _require_test_database(conn) -> None:
-    if conn.info.dbname != "medibridge_test":
-        raise RuntimeError("Integrity tests must run against medibridge_test.")
+    if not is_disposable_name(conn.info.dbname):
+        raise RuntimeError("Integrity tests must run against the disposable test database.")
 
 
 @pytest.fixture(autouse=True)

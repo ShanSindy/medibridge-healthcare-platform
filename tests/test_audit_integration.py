@@ -3,13 +3,14 @@ import pytest
 
 from audit import log_audit_event
 from database import get_connection
+from db_safety import is_disposable_name
 
 
 def test_audit_event_persists_in_postgresql():
     with get_connection() as conn:
-        if conn.info.dbname != "medibridge_test":
+        if not is_disposable_name(conn.info.dbname):
             raise RuntimeError(
-                "Integration tests must use medibridge_test."
+                "Integration tests must use the disposable test database."
             )
 
         # Use a unique identifier without patient information.
@@ -55,9 +56,9 @@ def test_audit_event_rolls_back_in_postgresql():
     resource_id = str(uuid.uuid4())
 
     with get_connection() as conn:
-        if conn.info.dbname != "medibridge_test":
+        if not is_disposable_name(conn.info.dbname):
             raise RuntimeError(
-                "Integration tests must use medibridge_test."
+                "Integration tests must use the disposable test database."
             )
 
         log_audit_event(
@@ -86,9 +87,9 @@ def test_audit_event_rolls_back_in_postgresql():
 
     # Open a new connection to verify the event was not saved.
     with get_connection() as verification_conn:
-        if verification_conn.info.dbname != "medibridge_test":
+        if not is_disposable_name(verification_conn.info.dbname):
             raise RuntimeError(
-                "Verification must use medibridge_test."
+                "Verification must use the disposable test database."
             )
 
         with verification_conn.cursor() as cursor:
@@ -109,9 +110,9 @@ def test_committed_audit_event_persists_in_postgresql():
     resource_id = str(uuid.uuid4())
 
     with get_connection() as conn:
-        if conn.info.dbname != "medibridge_test":
+        if not is_disposable_name(conn.info.dbname):
             raise RuntimeError(
-                "Integration tests must use medibridge_test."
+                "Integration tests must use the disposable test database."
             )
 
         try:
@@ -128,9 +129,9 @@ def test_committed_audit_event_persists_in_postgresql():
 
             # Verify persistence using a separate connection.
             with get_connection() as verification_conn:
-                if verification_conn.info.dbname != "medibridge_test":
+                if not is_disposable_name(verification_conn.info.dbname):
                     raise RuntimeError(
-                        "Verification must use medibridge_test."
+                        "Verification must use the disposable test database."
                     )
 
                 with verification_conn.cursor() as cursor:
@@ -154,9 +155,9 @@ def test_committed_audit_event_persists_in_postgresql():
         finally:
             # Remove only this test's audit event.
             with get_connection() as cleanup_conn:
-                if cleanup_conn.info.dbname != "medibridge_test":
+                if not is_disposable_name(cleanup_conn.info.dbname):
                     raise RuntimeError(
-                        "Cleanup must use medibridge_test."
+                        "Cleanup must use the disposable test database."
                     )
 
                 with cleanup_conn.cursor() as cursor:
@@ -180,9 +181,9 @@ def test_patient_creation_and_audit_roll_back_together():
     resource_marker = str(uuid.uuid4())
 
     with get_connection() as conn:
-        if conn.info.dbname != "medibridge_test":
+        if not is_disposable_name(conn.info.dbname):
             raise RuntimeError(
-                "Integration tests must use medibridge_test."
+                "Integration tests must use the disposable test database."
             )
 
         with conn.cursor() as cursor:
@@ -239,9 +240,9 @@ def test_patient_creation_and_audit_roll_back_together():
         conn.rollback()
 
     with get_connection() as verification_conn:
-        if verification_conn.info.dbname != "medibridge_test":
+        if not is_disposable_name(verification_conn.info.dbname):
             raise RuntimeError(
-                "Verification must use medibridge_test."
+                "Verification must use the disposable test database."
             )
 
         with verification_conn.cursor() as cursor:
@@ -271,9 +272,9 @@ def test_patient_creation_rolls_back_after_real_audit_failure():
 
     with pytest.raises(ValueError, match="Audit outcome"):
         with get_connection() as conn:
-            if conn.info.dbname != "medibridge_test":
+            if not is_disposable_name(conn.info.dbname):
                 raise RuntimeError(
-                    "Integration tests must use medibridge_test."
+                    "Integration tests must use the disposable test database."
                 )
 
             with conn.cursor() as cursor:
@@ -312,9 +313,9 @@ def test_patient_creation_rolls_back_after_real_audit_failure():
 
     # The connection context should have rolled back the patient insert.
     with get_connection() as verification_conn:
-        if verification_conn.info.dbname != "medibridge_test":
+        if not is_disposable_name(verification_conn.info.dbname):
             raise RuntimeError(
-                "Verification must use medibridge_test."
+                "Verification must use the disposable test database."
             )
 
         with verification_conn.cursor() as cursor:
@@ -334,9 +335,9 @@ def test_patient_creation_rolls_back_on_audit_constraint_violation():
 
     with pytest.raises(psycopg.errors.CheckViolation):
         with get_connection() as conn:
-            if conn.info.dbname != "medibridge_test":
+            if not is_disposable_name(conn.info.dbname):
                 raise RuntimeError(
-                    "Integration tests must use medibridge_test."
+                    "Integration tests must use the disposable test database."
                 )
 
             with conn.cursor() as cursor:
@@ -387,9 +388,9 @@ def test_patient_creation_rolls_back_on_audit_constraint_violation():
 
     # The failed audit INSERT must roll back the patient INSERT.
     with get_connection() as verification_conn:
-        if verification_conn.info.dbname != "medibridge_test":
+        if not is_disposable_name(verification_conn.info.dbname):
             raise RuntimeError(
-                "Verification must use medibridge_test."
+                "Verification must use the disposable test database."
             )
 
         with verification_conn.cursor() as cursor:
