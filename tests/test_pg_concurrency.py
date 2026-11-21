@@ -23,7 +23,9 @@ longer than B's statement timeout. If the worker cannot be shown to have
 finished, the test run stops rather than continue into database cleanup.
 """
 
+import os
 import queue
+import sys
 import threading
 import time
 
@@ -41,6 +43,7 @@ LOCK_TIMEOUT_MS = 30_000
 STATEMENT_TIMEOUT_MS = 45_000
 OBSERVE_SECONDS = 15
 JOIN_SECONDS = 60
+CONTAINMENT_SECONDS = 15
 POLL_SECONDS = 0.05
 
 
@@ -96,15 +99,24 @@ def verify_identity(conn, disposable_database):
 def observe_worker_connection(monkeypatch, module, disposable_database):
     """Wraps `module.get_connection`; returns a dict filled in when the worker connects."""
     real_get_connection = module.get_connection
-    seen = {"connected": threading.Event()}
+    seen = {"connected": threading.Event(), "stopped": threading.Event()}
 
     def observed_get_connection():
+        if seen["stopped"].is_set():
+            raise RuntimeError("worker containment is active; no new connections")
         conn = real_get_connection()
-        verify_identity(conn, disposable_database)
-        seen["pid"] = conn.info.backend_pid
-        seen["lock_timeout"] = conn.execute("SHOW lock_timeout").fetchone()[0]
-        seen["statement_timeout"] = conn.execute("SHOW statement_timeout").fetchone()[0]
-        conn.rollback()  # leave the real service code a fresh transaction
+        try:
+            verify_identity(conn, disposable_database)
+            seen["pid"], seen["backend_start"], seen["role"] = conn.execute(
+                "SELECT pid, backend_start, usename FROM pg_stat_activity "
+                "WHERE pid = pg_backend_pid()"
+            ).fetchone()
+            seen["lock_timeout"] = conn.execute("SHOW lock_timeout").fetchone()[0]
+            seen["statement_timeout"] = conn.execute("SHOW statement_timeout").fetchone()[0]
+            conn.rollback()  # leave the real service code a fresh transaction
+        except BaseException:
+            conn.close()
+            raise
         seen["connected"].set()
         return conn
 
@@ -112,7 +124,7 @@ def observe_worker_connection(monkeypatch, module, disposable_database):
     return seen
 
 
-def run_race(connect, seen, hold, operation, finish, database_name):
+def run_race(connect, seen, hold, operation, finish, disposable_database):
     """
     A runs `hold(cursor)` without committing. B runs `operation()` in a worker thread.
     Waits until PostgreSQL reports A blocking B, then commits or rolls back A and
@@ -140,7 +152,11 @@ def run_race(connect, seen, hold, operation, finish, database_name):
         deadline = time.monotonic() + OBSERVE_SECONDS
         assert seen["connected"].wait(timeout=OBSERVE_SECONDS), "worker never connected"
         b_pid = seen["pid"]
-        evidence.update(b_pid=b_pid, b_lock_timeout=seen["lock_timeout"])
+        evidence.update(
+            b_pid=b_pid,
+            b_lock_timeout=seen["lock_timeout"],
+            b_statement_timeout=seen["statement_timeout"],
+        )
         assert b_pid != a_pid
         while True:
             row = observer.execute(
@@ -159,20 +175,84 @@ def run_race(connect, seen, hold, operation, finish, database_name):
 
         a.commit() if finish == "commit" else a.rollback()
     finally:
-        if not a.closed:
-            a.rollback()
-            a.close()
-        if thread.is_alive() or thread.ident is not None:
-            thread.join(JOIN_SECONDS)
-        if thread.is_alive():
-            # A live worker could still write while fixtures truncate the database.
-            pytest.exit("concurrency worker did not finish; stopping the test run", returncode=3)
-        observer.close()
+        # Each step runs even if an earlier one raises, so A is always closed, the
+        # worker is always contained and the observer is always closed.
+        try:
+            if not a.closed:
+                try:
+                    a.rollback()
+                finally:
+                    a.close()
+        finally:
+            try:
+                contain_worker(thread, seen, disposable_database)
+            finally:
+                observer.close()
 
     outcome = results.get_nowait()
     evidence["b_closed"] = wait_until_backend_gone(connect, evidence.get("b_pid"))
-    evidence["database_matches"] = evidence.get("database") == database_name
+    evidence["database_matches"] = evidence.get("database") == disposable_database.name
     return outcome, evidence
+
+
+def contain_worker(thread, seen, disposable_database):
+    """
+    Joins the worker. If it outlives JOIN_SECONDS, blocks new worker connections,
+    terminates B's own backend (identity verified) and joins again. If the thread
+    still runs, or B's backend cannot be identified and terminated, the process exits
+    at once: no fixture teardown may run while a live worker could still write.
+    """
+    if thread.ident is None:
+        return
+    thread.join(JOIN_SECONDS)
+    if not thread.is_alive():
+        return
+    seen["stopped"].set()
+    try:
+        terminate_worker_backend(seen, disposable_database)
+        thread.join(CONTAINMENT_SECONDS)
+        problem = "the worker thread still runs after its backend was terminated"
+    except Exception as exc:  # any failure to contain B ends the run below
+        problem = f"B's backend could not be terminated safely: {exc}"
+    if thread.is_alive():
+        sys.stderr.write(f"\nSTOPPING: {problem}; exiting without fixture teardown.\n")
+        sys.stderr.flush()
+        os._exit(3)
+    pytest.fail(f"worker exceeded {JOIN_SECONDS}s; its backend was terminated and it stopped")
+
+
+class WorkerContainmentError(RuntimeError):
+    pass
+
+
+def terminate_worker_backend(seen, disposable_database):
+    """
+    Terminates only B's backend: the same PID, start time, database and role, from a
+    connection verified to be this session's disposable database; then checks it is gone.
+    """
+    pid, started, role = seen.get("pid"), seen.get("backend_start"), seen.get("role")
+    if None in (pid, started, role):
+        raise WorkerContainmentError("B's backend identity was never recorded")
+    conn = psycopg.connect(
+        **disposable_database.config.connect_kwargs(disposable_database.name), autocommit=True
+    )
+    try:
+        verify_identity(conn, disposable_database)
+        row = conn.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE pid = %s AND backend_start = %s AND datname = %s "
+            "AND usename = %s AND usename = current_user",
+            (pid, started, disposable_database.name, role),
+        ).fetchone()
+        if row is None or row[0] is not True:
+            raise WorkerContainmentError(f"backend {pid} did not match B's identity")
+        deadline = time.monotonic() + CONTAINMENT_SECONDS
+        while conn.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s", (pid,)).fetchone():
+            if time.monotonic() > deadline:
+                raise WorkerContainmentError(f"backend {pid} still present after termination")
+            time.sleep(POLL_SECONDS)
+    finally:
+        conn.close()
 
 
 def wait_until_backend_gone(connect, pid):
@@ -196,13 +276,21 @@ def assert_blocking_evidence(evidence, statement_prefix, record_property):
         "blocking_evidence",
         {
             k: evidence.get(k)
-            for k in ("a_pid", "b_pid", "blocked_by", "b_lock_timeout", "b_closed")
+            for k in (
+                "a_pid",
+                "b_pid",
+                "blocked_by",
+                "b_lock_timeout",
+                "b_statement_timeout",
+                "b_closed",
+            )
         },
     )
     assert evidence["a_pid"] in evidence["blocked_by"]
     assert evidence["database_matches"]
     assert evidence["b_query"].lstrip().upper().startswith(statement_prefix)
     assert evidence["b_lock_timeout"] == "30s"
+    assert evidence["b_statement_timeout"] == "45s"
     assert evidence["b_closed"]
 
 
@@ -273,7 +361,7 @@ def test_overlapping_booking_waits_for_and_fails_after_a_commits(
         hold_appointment(patient_id, provider_id),
         book_overlapping(patient_id, provider_id),
         "commit",
-        disposable_database.name,
+        disposable_database,
     )
 
     assert_blocking_evidence(evidence, "INSERT INTO APPOINTMENTS", record_property)
@@ -296,7 +384,7 @@ def test_overlapping_booking_waits_for_and_succeeds_after_a_rolls_back(
         hold_appointment(patient_id, provider_id),
         book_overlapping(patient_id, provider_id),
         "rollback",
-        disposable_database.name,
+        disposable_database,
     )
 
     assert_blocking_evidence(evidence, "INSERT INTO APPOINTMENTS", record_property)
@@ -348,7 +436,7 @@ def test_duplicate_hl7_control_id_waits_and_is_reported_as_duplicate(
         hold,
         lambda: hl7_service.register_patient_from_hl7(MESSAGE),
         "commit",
-        disposable_database.name,
+        disposable_database,
     )
 
     assert_blocking_evidence(evidence, "INSERT INTO HL7_MESSAGES", record_property)
