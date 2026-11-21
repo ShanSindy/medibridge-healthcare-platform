@@ -47,20 +47,52 @@ extend-immutable-calls = [
     "auth_dependencies.require_roles",
 ]
 
+[tool.pytest.ini_options]
+# Collect tests only from tests/, never from scripts at the repository root.
+testpaths = ["tests"]
+
 [tool.coverage.run]
 branch = true
-# Measures every Python file in the repository (application modules,
-# migrate.py, conftest.py and the test-database safety code under tests/),
-# including files no test imports, which then count as uncovered.
+# Scan the whole repository so files that no test imports still count, as 0%.
 source = ["."]
-omit = [
-    "tests/test_*.py",  # the test cases themselves
-    "scripts/*",        # CI reporting utilities
-    ".venv/*",
-    "frontend/*",
-]
+omit = [".venv/*", "frontend/*"]
 
 [tool.coverage.report]
+# The measured scope, listed explicitly. Only these files are reported and
+# counted towards fail_under, so nothing else present in a working copy
+# (local scripts, scratch files) can change the result.
+# tests/test_coverage_scope.py fails if a tracked Python file is neither
+# listed here nor one of the deliberate exclusions (test cases, scripts/).
+include = [
+    # Application modules
+    "appointment_service.py",
+    "audit.py",
+    "audit_service.py",
+    "auth_dependencies.py",
+    "auth_service.py",
+    "database.py",
+    "db_errors.py",
+    "fhir.py",
+    "hl7_ack.py",
+    "hl7_parser.py",
+    "hl7_service.py",
+    "hl7_tracking.py",
+    "main.py",
+    "models.py",
+    "patients.py",
+    "permissions.py",
+    "provider_service.py",
+    "security.py",
+    "token_service.py",
+    "user_service.py",
+    # Migration logic
+    "migrate.py",
+    # Test-database safety infrastructure
+    "conftest.py",
+    "tests/conftest.py",
+    "tests/db_safety.py",
+    "tests/disposable_database.py",
+]
 # Combined line + branch coverage. Baseline measured before enforcement: 87.0%.
 fail_under = 85
 show_missing = true
