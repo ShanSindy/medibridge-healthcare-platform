@@ -89,6 +89,11 @@ include = [
     "security.py",
     "token_service.py",
     "user_service.py",
+    # API routers
+    "routers/__init__.py",
+    "routers/audit_logs.py",
+    "routers/auth.py",
+    "routers/system.py",
     # Migration logic
     "migrate.py",
     # Test-database safety infrastructure

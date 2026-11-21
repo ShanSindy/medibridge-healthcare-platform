@@ -4,11 +4,9 @@ from urllib.parse import urlencode
 from fastapi import (
     Depends,
     FastAPI,
-    Form,
     HTTPException,
     Query,
     Request,
-    status,
 )
 from fastapi.exception_handlers import (
     request_validation_exception_handler,
@@ -30,13 +28,10 @@ from appointment_service import (
     update_appointment,
 )
 from audit import log_audit_event
-from audit_service import get_audit_logs
 from auth_dependencies import (
     get_current_user,
     require_permission,
-    require_roles,
 )
-from auth_service import authenticate_user
 from database import (
     get_connection,
     get_identifiers_for_patients,
@@ -72,10 +67,7 @@ from provider_service import (
     search_providers,
     update_provider,
 )
-from token_service import (
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
-    create_access_token,
-)
+from routers import audit_logs, auth, system
 
 app = FastAPI()
 
@@ -122,32 +114,10 @@ async def fhir_validation_exception_handler(request: Request, exc: RequestValida
     return await request_validation_exception_handler(request, exc)
 
 
-@app.get("/")
-def home():
-    return {"application": "MediBridge", "status": "running"}
+app.include_router(system.router)
 
 
-@app.get("/health")
-def health_check():
-    return {"status": "healthy", "service": "MediBridge API"}
-
-
-@app.get("/audit-logs")
-def list_audit_logs(
-    limit: int = Query(default=50, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
-    current_user: dict = Depends(require_permission("audit:read")),
-):
-    """Retrieve audit history for authorized administrators."""
-
-    return {
-        "limit": limit,
-        "offset": offset,
-        "items": get_audit_logs(
-            limit=limit,
-            offset=offset,
-        ),
-    }
+app.include_router(audit_logs.router)
 
 
 @app.get(
@@ -931,50 +901,7 @@ def cancel_appointment_endpoint(appointment_id: int):
     return cancelled_appointment
 
 
-@app.get("/auth/me", tags=["Authentication"])
-def read_current_user(
-    current_user: dict = Depends(get_current_user),
-):
-    """Return the currently authenticated user's information."""
-    return current_user
-
-
-@app.post("/auth/login", tags=["Authentication"])
-def login(
-    username: str = Form(...),
-    password: str = Form(...),
-):
-    """Authenticate a user and issue a JWT access token."""
-
-    user = authenticate_user(username, password)
-
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    access_token = create_access_token(user["id"])
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-    }
-
-
-@app.get("/auth/admin-check", tags=["Authentication"])
-def admin_check(
-    current_user: dict = Depends(require_roles("admin")),
-):
-    """Verify that the authenticated user has administrator access."""
-
-    return {
-        "message": "Administrator access granted",
-        "username": current_user["username"],
-        "role": current_user["role"],
-    }
+app.include_router(auth.router)
 
 
 @app.get(
