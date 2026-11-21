@@ -67,6 +67,7 @@ def test_database_safety_infrastructure_is_measured():
         "tests/conftest.py",
         "tests/db_safety.py",
         "tests/disposable_database.py",
+        "tests/isolation_guard.py",
     } <= COVERAGE_INCLUDE
 
 

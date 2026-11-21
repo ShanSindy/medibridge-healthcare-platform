@@ -6,6 +6,9 @@ database) when the run's root directory is the repository root. Started from
 inside `tests/`, possibly with PYTHONPATH pointing at the repository, the
 tests could otherwise import the application and reach whatever database the
 development `.env` names. Import failures are not relied on for safety.
+
+tests/isolation_guard.py (loaded through addopts) performs the same check
+and also covers --noconftest, which disables this file.
 """
 
 import os

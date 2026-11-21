@@ -50,6 +50,10 @@ extend-immutable-calls = [
 [tool.pytest.ini_options]
 # Collect tests only from tests/, never from scripts at the repository root.
 testpaths = ["tests"]
+# Load the isolation guard for every run, including --noconftest runs, from the
+# repository root or from tests/ (pythonpath makes `tests.` importable in both).
+pythonpath = ["."]
+addopts = ["-p", "tests.isolation_guard"]
 
 [tool.coverage.run]
 branch = true
@@ -92,6 +96,7 @@ include = [
     "tests/conftest.py",
     "tests/db_safety.py",
     "tests/disposable_database.py",
+    "tests/isolation_guard.py",
 ]
 # Combined line + branch coverage. Baseline measured before enforcement: 87.0%.
 fail_under = 85

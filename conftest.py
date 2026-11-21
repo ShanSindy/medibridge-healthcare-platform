@@ -23,8 +23,9 @@ omits are removed from the environment, and the application's own
 shell can supply a value. The superuser override is accepted only from
 `.env.test`.
 
-tests/conftest.py refuses to run if this file was not loaded, for example
-when pytest is started from inside `tests/`.
+tests/isolation_guard.py (loaded for every run through addopts in
+pyproject.toml) and tests/conftest.py refuse to run if this file was not
+loaded, for example with --noconftest or --confcutdir.
 
 Limitation: if the process is killed (for example with SIGKILL), its
 database is left behind. Later runs report such databases but never delete

@@ -21,6 +21,7 @@ SAFETY_FILES = {
     "tests/conftest.py",
     "tests/db_safety.py",
     "tests/disposable_database.py",
+    "tests/isolation_guard.py",
 }
 
 
