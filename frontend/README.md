@@ -11,13 +11,15 @@ pages can optionally read live data from the MediBridge FastAPI backend.
 
 ## Quick start
 
-Requires Node.js 22 or later.
+Requires Node.js 26 (see `.nvmrc`; CI uses the same version).
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
+
+`npm ci` installs the exact versions in `package-lock.json`, as CI does.
 
 Open the URL Vite prints (usually http://localhost:5173). The app starts in
 **demo mode**, so no backend is needed.
@@ -67,24 +69,12 @@ browser only.
 
 #### Running the backend
 
-From the repository root, with PostgreSQL running:
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-python migrate.py                # creates or updates the tables
-uvicorn main:app --port 8000
-```
-
-The backend reads its settings from a `.env` file in the repository root:
-`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` and `JWT_SECRET_KEY`
-(at least 48 characters). `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` is optional and
-defaults to 30. Keep this file out of version control.
-
-There is no sign-up endpoint. Create an account with the backend's
-`user_service.create_user(username, email, password, role)` function, using
-the role `admin`, `clinician` or `scheduler` to be able to view patients.
+Setting up the backend (Python 3.14, PostgreSQL, `.env`, migrations and a
+first user account) is described in
+[docs/getting-started.md](../docs/getting-started.md). There is no sign-up
+endpoint; that guide shows the temporary procedure for creating accounts. Use
+the role `admin`, `clinician` or `scheduler` to be able to view patients; every
+role can view providers.
 
 #### Configuration reference
 
@@ -163,6 +153,15 @@ partially displayed.
 The Providers page is a searchable directory with a detail view for each
 provider.
 
+![Provider directory in demo mode, showing synthetic provider cards with specialty, credentials, location, availability, phone and email](../docs/images/providers-demo.png)
+
+*Demo mode: synthetic records bundled with the dashboard.*
+
+![Provider directory in API mode, showing three synthetic providers from the backend with specialty, phone and email only](../docs/images/providers-api.png)
+
+*API mode: synthetic records read from `GET /providers` on a local backend. Fields the
+backend does not store are not shown.*
+
 | | Demo mode | API mode |
 |---|---|---|
 | Directory | Synthetic records | `GET /providers` |
@@ -233,9 +232,9 @@ cover (`src/**/*.test.ts`) and stub `fetch`, so they never call a real server:
 - `services/dashboardTrends.test.ts` — chart aggregations (months, days, hours, demographics)
 - `services/systemStatus.test.ts` — health reporting, including unreachable and unhealthy APIs
 
-The backend has its own test suite. From the repository root, with a
-`.env.test` file pointing at a `medibridge_test` database, run
-`python -m pytest -q`.
+The backend has its own test suite, which creates and drops a disposable
+PostgreSQL database for every run. See
+[docs/development-and-testing.md](../docs/development-and-testing.md).
 
 `npm test` runs through `scripts/vitest.mjs`, which normalises the Windows
 drive-letter case of the working directory. Without it, Vitest fails every
