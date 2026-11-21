@@ -222,8 +222,8 @@ The roadmap is a proposal and may change. There are no committed dates.
 | 2. Disposable test-database isolation | Done ([#18](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/18)) |
 | 3. Quality gates and CI | Done ([#19](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/19)) |
 | 4. API router refactoring | Done ([#20](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/20)) |
-| 5. Documentation | In review |
-| 6. PostgreSQL integration testing | Next |
+| 5. Documentation | Done ([#21](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/21)) |
+| 6. PostgreSQL integration testing | In progress |
 
 Follow-up before Phase 2: a supported first-user provisioning command and reproducible
 synthetic demo data.
