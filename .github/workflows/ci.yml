@@ -68,19 +68,45 @@ jobs:
       # The test suite creates and drops its own disposable database, so it
       # runs as a role with only LOGIN and CREATEDB. The role password and the
       # JWT signing key are random per run and masked in logs.
+      #
+      # The container superuser password above is public (it is in this file),
+      # so this step replaces it with a random value that is never stored, and
+      # checks that the original no longer authenticates over TCP. This keeps
+      # later steps from using the published password; it is not a boundary
+      # against arbitrary code on the runner, which can reach the container
+      # directly (for example with `docker exec`).
       - name: Create least-privileged test role
         env:
           PGPASSWORD: ci_container_superuser_password_not_for_production
         run: |
           tester_password="$(openssl rand -hex 24)"
           jwt_secret="$(openssl rand -hex 32)"
+          superuser_password="$(openssl rand -hex 32)"
           echo "::add-mask::${tester_password}"
           echo "::add-mask::${jwt_secret}"
-          psql -h localhost -U medibridge -d postgres -v ON_ERROR_STOP=1 \
-            -v tester_password="${tester_password}" <<'SQL'
+          echo "::add-mask::${superuser_password}"
+          # Secrets reach psql only through standard input, never as arguments.
+          psql -h localhost -U medibridge -d postgres -v ON_ERROR_STOP=1 --quiet <<SQL
           CREATE ROLE medibridge_tester LOGIN CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION
-            PASSWORD :'tester_password';
+            PASSWORD '${tester_password}';
+          ALTER ROLE medibridge PASSWORD '${superuser_password}';
           SQL
+          unset superuser_password
+
+          # The published provisioning password must no longer authenticate.
+          if psql -h localhost -U medibridge -d postgres -tAc "SELECT 1" > /dev/null 2>&1; then
+            echo "::error::The original superuser password still authenticates."
+            exit 1
+          fi
+          # The test role authenticates and has exactly the expected privileges.
+          privileges="$(PGPASSWORD="${tester_password}" psql -h localhost -U medibridge_tester \
+            -d postgres -tA -v ON_ERROR_STOP=1 \
+            -c "SELECT rolsuper, rolcreatedb FROM pg_roles WHERE rolname = current_user")"
+          if [ "${privileges}" != "f|t" ]; then
+            echo "::error::Unexpected test role privileges: ${privileges}"
+            exit 1
+          fi
+
           {
             echo "DB_PASSWORD=${tester_password}"
             echo "JWT_SECRET_KEY=${jwt_secret}"
