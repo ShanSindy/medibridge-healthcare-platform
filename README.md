@@ -123,8 +123,9 @@ You need Python 3.14, PostgreSQL, Node.js 26 and Git. In short:
 
 The full procedure for Windows PowerShell and POSIX shells, including the temporary
 first-user procedure and troubleshooting, is in
-[docs/getting-started.md](docs/getting-started.md). The frontend runs on its own in
-demo mode with no backend.
+[docs/getting-started.md](docs/getting-started.md). It was followed end to end on Windows;
+the guide states which steps were executed and how. The frontend runs on its own in demo
+mode with no backend.
 
 ## API
 
@@ -198,7 +199,7 @@ independent human verification.
 
 The roadmap is a proposal and may change. There are no committed dates.
 
-**Phase 1: Engineering foundation** (current)
+**Phase 1: Engineering foundation** (current; status as of 2026-11-21)
 
 | Task | Status |
 |---|---|
@@ -206,7 +207,7 @@ The roadmap is a proposal and may change. There are no committed dates.
 | 2. Disposable test-database isolation | Done ([#18](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/18)) |
 | 3. Quality gates and CI | Done ([#19](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/19)) |
 | 4. API router refactoring | Done ([#20](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/20)) |
-| 5. Documentation | In progress |
+| 5. Documentation | In review |
 | 6. PostgreSQL integration testing | Next |
 
 Follow-up before Phase 2: a supported first-user provisioning command and reproducible

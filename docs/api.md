@@ -67,7 +67,12 @@ API=http://localhost:8000
 ```
 
 Response bodies below are examples. Identifiers and timestamps will differ, and `…`
-marks content left out for brevity.
+marks content left out for brevity. Identifiers can have gaps: a rejected insert (for
+example a conflict) still uses up a sequence value.
+
+These examples were run in order, unchanged, in Git Bash on Windows against the real
+application and a fresh PostgreSQL 18 database on 2026-11-21, together with the error
+cases described below.
 
 ### Health
 

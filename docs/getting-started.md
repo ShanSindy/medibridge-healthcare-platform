@@ -5,15 +5,20 @@ frontend. MediBridge uses synthetic data only; never enter real patient informat
 
 ## How these instructions were verified
 
-| Step | Status |
+This guide was followed end to end on 2026-11-21 on Windows 11, from a fresh clone, with
+Python 3.14, PostgreSQL 18.6 and Node.js 26, against a newly created database owned by a
+new non-superuser role.
+
+| Step | How it was verified |
 |---|---|
-| Python environment, dependency installation | Executed on Windows (Python 3.14) |
-| `.env` placeholder rejected, key generation command | Executed in Windows PowerShell and Git Bash |
-| Backend startup, `/`, `/health`, `/docs`, `/redoc`, `/openapi.json`, `/fhir/metadata`, 401 on protected routes | Executed with placeholder settings (no database) |
-| Frontend `npm ci`, `npm run dev`, demo mode | Executed on Windows (Node.js 26) |
-| Database and role creation, migrations as the database owner | Checked against the source and the CI workflow, which runs every migration on PostgreSQL 18 as a non-superuser database owner. Not executed by following this guide |
-| First-user procedure, login, frontend API mode against a live database | Checked against the source. Not yet executed end-to-end |
-| POSIX shell commands | Equivalent commands; not executed on Linux or macOS for this guide |
+| 2. Python environment (`py -3.14 -m venv`, `Activate.ps1`, `pip install`) | Executed in Windows PowerShell |
+| 3. Role and database | The `CREATE ROLE` and `CREATE DATABASE ... OWNER` statements were executed with unique names through a script, which set the password the way `\password` does; the interactive `psql` session itself was not run |
+| 4. `.env`: copy, placeholder rejected, key generated | Executed in Windows PowerShell; key command also in Git Bash |
+| 5. Migrations, including `btree_gist`, as the non-superuser owner; re-run skips | Executed against real PostgreSQL |
+| 6. First-user procedure | Both Python blocks executed verbatim in Python's interactive console, with the prompts answered by a script rather than typed by a person |
+| 8. Backend, `/health`, `/docs`, `/redoc`, `/openapi.json`, sign-in | Executed against real PostgreSQL |
+| 9. Frontend `npm ci`, demo mode, API mode through the `/api` proxy, sign-in | Executed (Git Bash and headless Chrome on Windows) |
+| POSIX commands | Run in Git Bash on Windows only; not executed on Linux or macOS |
 
 If a step fails for you, please report it.
 
@@ -63,7 +68,7 @@ dedicated application role and a database owned by it, once:
 
 ```sql
 -- Run as a PostgreSQL administrator, for example: psql -U postgres -d postgres
-CREATE ROLE medibridge_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+CREATE ROLE medibridge_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 \password medibridge_app
 CREATE DATABASE medibridge_dev OWNER medibridge_app;
 ```
@@ -82,8 +87,9 @@ Why ownership is enough:
   reports that the extension is not available, install your platform's PostgreSQL
   contrib package.
 
-CI exercises exactly this arrangement: every migration runs on PostgreSQL 18 as a
-non-superuser role that owns its database.
+CI exercises exactly this arrangement (every migration runs on PostgreSQL 18 as a
+non-superuser role that owns its database), and so did the verification run of this
+guide.
 
 **Tests use a different role.** The test suite creates and drops its own disposable
 databases, so it needs a separate role with `LOGIN` and `CREATEDB` and no access to your
@@ -179,7 +185,9 @@ user = create_user(
 print({key: user[key] for key in ("id", "username", "role")})
 ```
 
-Create an `admin` account first. It can do everything else through the API.
+Create an `admin` account first: it has every permission in the API. The API has no
+user-management endpoints, so every further account (for example a `clinician` for
+viewing patients) is created with this same procedure.
 
 ## 7. Synthetic data
 
@@ -217,8 +225,9 @@ npm ci
 npm run dev
 ```
 
-Open the URL Vite prints (normally <http://localhost:5173>). The dashboard starts in
-**demo mode** with bundled synthetic data and needs no backend.
+Open the URL Vite prints (normally <http://localhost:5173>; if that port is busy, Vite
+picks the next free one and prints it). The dashboard starts in **demo mode** with
+bundled synthetic data and needs no backend.
 
 To use the backend, create `frontend/.env.local` (git-ignored) with:
 
@@ -229,7 +238,8 @@ VITE_API_BASE_URL=/api
 
 and restart `npm run dev`. The backend has no CORS configuration, so the browser reaches
 it through the Vite `/api` proxy, which forwards to `http://localhost:8000` (set
-`API_PROXY_TARGET` to change it). Only Dashboard, Patients and Providers read from the
+`API_PROXY_TARGET` to change it). Open **Patients** and sign in with an `admin`,
+`clinician` or `scheduler` account. Only Dashboard, Patients and Providers read from the
 API; the [frontend README](../frontend/README.md) explains each mode.
 
 ## Troubleshooting
