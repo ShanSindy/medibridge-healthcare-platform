@@ -35,7 +35,9 @@ python -m pytest
 
 Supported from the repository root and from `tests/`. Every run creates its own disposable
 database (`medibridge_test_<random>`), empties it before and after each test, and drops it at
-the end. Existing databases are never used. Tests are collected only from `tests/`.
+the end of a normal run. A run that is interrupted (for example, the process is killed) can
+leave its database behind; later runs list such databases in a warning but never delete them
+automatically. Existing databases are never used. Tests are collected only from `tests/`.
 
 ## API contract and architecture tests
 

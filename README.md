@@ -163,8 +163,8 @@ check it.*
 ![MediBridge patient registry in API mode, listing six synthetic patients with name, ID, date of birth, age and gender, and a notice that contact and care fields are not returned by the backend](docs/images/patients-api.png)
 
 *Patient registry in API mode, showing the synthetic records stored in a local database.
-The backend returns only name, date of birth and gender, so the demo-only columns are
-hidden.*
+The backend returns only the patient ID, name, date of birth and gender, so the demo-only
+columns are hidden.*
 
 ![MediBridge provider directory in API mode, listing three synthetic providers with specialty, phone and email, and a notice that credentials, department, location and availability are not stored by the backend](docs/images/providers-api.png)
 
@@ -184,7 +184,9 @@ the API in either mode.*
   and 2 were skipped intentionally; combined coverage 90.97%; 176 frontend tests passed.
   These figures are a snapshot, not continuously updated. CI reports pass or fail per job.
 - **Test isolation:** every backend test run creates its own disposable PostgreSQL
-  database and drops it afterwards; misconfigured or unsafe runs are refused.
+  database, empties it around each test and drops it when the run finishes normally; a
+  run that is interrupted can leave it behind, and later runs report such leftovers.
+  Misconfigured or unsafe runs are refused.
 - **Regression tests** pin the API contract (all 29 operations, their access rules and
   routing) and the router architecture.
 
@@ -233,11 +235,11 @@ synthetic demo data.
 | 2. Database modernization | SQLAlchemy and Alembic (planned, not implemented); connection timeouts and pooling |
 | 3. API enhancement | Pagination and search for REST lists |
 | 4. Healthcare interoperability | HL7 version validation; consistent FHIR content types, errors and absolute links |
-| 5. Security and compliance foundations | Broader audit coverage; login rate limiting and other authentication hardening |
+| 5. Security and audit foundations | Broader audit coverage; login rate limiting and other authentication hardening |
 | 6. Frontend and clinical dashboard | Connect appointments and the integration and audit screens |
 | 7. Cloud infrastructure and deployment | Containerization and hosting (planned) |
 | 8. Observability and site reliability | Database readiness checks; metrics and monitoring (planned) |
-| 9. Portfolio and production readiness | Final hardening and presentation |
+| 9. Final hardening and portfolio presentation | Remaining hardening and project presentation |
 
 ## License
 

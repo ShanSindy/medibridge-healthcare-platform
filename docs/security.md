@@ -79,7 +79,8 @@ backend's access-denied responses.
 
 - **Disposable test databases.** Each test run creates its own PostgreSQL database with
   an ownership marker, verifies its identity before writing, empties it around every
-  test and drops it at the end. Existing databases are never used.
+  test and drops it when the run finishes normally. Databases left by interrupted runs
+  are reported by later runs, not deleted automatically. Existing databases are never used.
 - **Fail-closed configuration.** Tests read only `.env.test`, which must declare
   `MEDIBRIDGE_ENV=test`; the development `.env` is never loaded. Superuser test roles
   are refused unless explicitly allowed in `.env.test`, and runs that bypass the safety
