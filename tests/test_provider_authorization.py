@@ -33,7 +33,7 @@ def test_authenticated_roles_can_read_providers(
     )
 
     monkeypatch.setattr(
-        "main.get_all_providers",
+        "routers.providers.get_all_providers",
         list,
     )
 
@@ -122,7 +122,7 @@ def test_admin_can_manage_providers(
 
     # Mock provider creation.
     monkeypatch.setattr(
-        "main.create_provider",
+        "routers.providers.create_provider",
         lambda provider: {
             "id": 1,
             **provider.model_dump(),
@@ -132,7 +132,7 @@ def test_admin_can_manage_providers(
 
     # Mock provider updates.
     monkeypatch.setattr(
-        "main.update_provider",
+        "routers.providers.update_provider",
         lambda provider_id, provider: {
             "id": provider_id,
             **provider.model_dump(),
@@ -142,7 +142,7 @@ def test_admin_can_manage_providers(
 
     # Mock provider deletion.
     monkeypatch.setattr(
-        "main.delete_provider",
+        "routers.providers.delete_provider",
         lambda provider_id: True,
     )
 

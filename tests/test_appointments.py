@@ -4,6 +4,7 @@ from psycopg.errors import ExclusionViolation
 
 import main
 from auth_dependencies import get_current_user
+from routers import appointments as appointments_router
 
 client = TestClient(main.app)
 
@@ -48,7 +49,7 @@ def test_list_appointments_returns_appointments(monkeypatch):
         return sample_appointments
 
     monkeypatch.setattr(
-        main,
+        appointments_router,
         "get_all_appointments",
         fake_get_all_appointments,
     )
@@ -80,7 +81,7 @@ def test_create_appointment_returns_201(monkeypatch):
         }
 
     monkeypatch.setattr(
-        main,
+        appointments_router,
         "create_appointment",
         fake_create_appointment,
     )
@@ -122,7 +123,7 @@ def test_create_appointment_conflict_returns_409(monkeypatch):
         raise FakeExclusionViolation("conflicting key value violates exclusion constraint")
 
     monkeypatch.setattr(
-        main,
+        appointments_router,
         "create_appointment",
         fake_create_appointment,
     )
@@ -160,7 +161,7 @@ def test_update_appointment_conflict_returns_409(monkeypatch):
         raise FakeExclusionViolation("conflicting key value violates exclusion constraint")
 
     monkeypatch.setattr(
-        main,
+        appointments_router,
         "update_appointment",
         fake_update_appointment,
     )
@@ -200,7 +201,7 @@ def test_cancel_appointment_returns_cancelled_status(monkeypatch):
         }
 
     monkeypatch.setattr(
-        main,
+        appointments_router,
         "cancel_appointment",
         fake_cancel_appointment,
     )
@@ -222,7 +223,7 @@ def test_create_appointment_rejects_invalid_time(monkeypatch):
         raise AssertionError("Database service should not be called for invalid input")
 
     monkeypatch.setattr(
-        main,
+        appointments_router,
         "create_appointment",
         fake_create_appointment,
     )
@@ -256,7 +257,7 @@ def test_get_appointment_not_found_returns_404(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        main,
+        appointments_router,
         "get_appointment_by_id",
         fake_get_appointment_by_id,
     )

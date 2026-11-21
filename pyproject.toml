@@ -91,8 +91,10 @@ include = [
     "user_service.py",
     # API routers
     "routers/__init__.py",
+    "routers/appointments.py",
     "routers/audit_logs.py",
     "routers/auth.py",
+    "routers/providers.py",
     "routers/system.py",
     # Migration logic
     "migrate.py",
