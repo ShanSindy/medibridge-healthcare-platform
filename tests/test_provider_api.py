@@ -42,7 +42,7 @@ def sample_provider():
 
 def test_get_provider_by_id_success():
     with patch(
-        "main.get_provider_by_id",
+        "routers.providers.get_provider_by_id",
         return_value=sample_provider(),
     ):
         response = client.get("/providers/1")
@@ -59,7 +59,7 @@ def test_get_provider_by_id_success():
 
 def test_get_provider_by_id_not_found():
     with patch(
-        "main.get_provider_by_id",
+        "routers.providers.get_provider_by_id",
         return_value=None,
     ):
         response = client.get("/providers/99999")
@@ -84,7 +84,7 @@ def test_create_provider_success():
     }
 
     with patch(
-        "main.create_provider",
+        "routers.providers.create_provider",
         return_value=sample_provider(),
     ) as mock_create:
         response = client.post(
@@ -109,7 +109,7 @@ def test_create_provider_missing_required_field():
         "last_name": "Carter",
     }
 
-    with patch("main.create_provider") as mock_create:
+    with patch("routers.providers.create_provider") as mock_create:
         response = client.post(
             "/providers",
             json=provider_data,
@@ -127,7 +127,7 @@ def test_create_provider_invalid_email():
         "email": "invalid-email",
     }
 
-    with patch("main.create_provider") as mock_create:
+    with patch("routers.providers.create_provider") as mock_create:
         response = client.post(
             "/providers",
             json=provider_data,
@@ -144,7 +144,7 @@ def test_create_provider_blank_specialty():
         "specialty": "   ",
     }
 
-    with patch("main.create_provider") as mock_create:
+    with patch("routers.providers.create_provider") as mock_create:
         response = client.post(
             "/providers",
             json=provider_data,
@@ -169,7 +169,7 @@ def test_get_all_providers_success():
     ]
 
     with patch(
-        "main.get_all_providers",
+        "routers.providers.get_all_providers",
         return_value=providers,
     ) as mock_get_all:
         response = client.get("/providers")
@@ -189,7 +189,7 @@ def test_get_all_providers_success():
 
 def test_get_all_providers_empty():
     with patch(
-        "main.get_all_providers",
+        "routers.providers.get_all_providers",
         return_value=[],
     ) as mock_get_all:
         response = client.get("/providers")
@@ -210,7 +210,7 @@ def test_update_provider_success():
     }
 
     with patch(
-        "main.update_provider",
+        "routers.providers.update_provider",
         return_value=sample_provider(),
     ) as mock_update:
         response = client.put(
@@ -238,7 +238,7 @@ def test_update_provider_not_found():
     }
 
     with patch(
-        "main.update_provider",
+        "routers.providers.update_provider",
         return_value=None,
     ) as mock_update:
         response = client.put(
@@ -259,7 +259,7 @@ def test_update_provider_invalid_data():
         "specialty": "   ",
     }
 
-    with patch("main.update_provider") as mock_update:
+    with patch("routers.providers.update_provider") as mock_update:
         response = client.put(
             "/providers/1",
             json=provider_data,
@@ -271,7 +271,7 @@ def test_update_provider_invalid_data():
 
 def test_delete_provider_success():
     with patch(
-        "main.delete_provider",
+        "routers.providers.delete_provider",
         return_value=True,
     ) as mock_delete:
         response = client.delete("/providers/1")
@@ -284,7 +284,7 @@ def test_delete_provider_success():
 
 def test_delete_provider_not_found():
     with patch(
-        "main.delete_provider",
+        "routers.providers.delete_provider",
         return_value=False,
     ) as mock_delete:
         response = client.delete("/providers/99999")
@@ -296,7 +296,7 @@ def test_delete_provider_not_found():
 
 
 def test_delete_provider_invalid_id():
-    with patch("main.delete_provider") as mock_delete:
+    with patch("routers.providers.delete_provider") as mock_delete:
         response = client.delete("/providers/abc")
 
     assert response.status_code == 422

@@ -48,7 +48,7 @@ def test_authorized_roles_can_search_practitioner_roles(monkeypatch, role):
         captured.update(kwargs)
         return [provider()], 1
 
-    monkeypatch.setattr("main.search_providers", fake_search)
+    monkeypatch.setattr("routers.fhir.search_providers", fake_search)
 
     response = client.get(
         "/fhir/PractitionerRole",
@@ -80,7 +80,7 @@ def test_practitioner_role_search_pagination(monkeypatch):
         captured.update(kwargs)
         return [provider(8)], 12
 
-    monkeypatch.setattr("main.search_providers", fake_search)
+    monkeypatch.setattr("routers.fhir.search_providers", fake_search)
 
     response = client.get(
         "/fhir/PractitionerRole",
@@ -108,7 +108,7 @@ def test_practitioner_role_search_empty_results(monkeypatch):
     headers = authorize(monkeypatch)
 
     monkeypatch.setattr(
-        "main.search_providers",
+        "routers.fhir.search_providers",
         lambda **kwargs: ([], 0),
     )
 

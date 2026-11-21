@@ -31,7 +31,7 @@ def test_allowed_roles_can_read_appointments(
     )
 
     monkeypatch.setattr(
-        "main.get_all_appointments",
+        "routers.appointments.get_all_appointments",
         lambda **kwargs: [],
     )
 

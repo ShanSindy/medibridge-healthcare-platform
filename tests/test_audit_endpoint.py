@@ -27,7 +27,7 @@ def test_admin_can_read_audit_logs(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: make_user("admin")
 
     monkeypatch.setattr(
-        "main.get_audit_logs",
+        "routers.audit_logs.get_audit_logs",
         lambda limit, offset: [],
     )
 
@@ -70,7 +70,7 @@ def test_audit_endpoint_custom_pagination(monkeypatch):
         return []
 
     monkeypatch.setattr(
-        "main.get_audit_logs",
+        "routers.audit_logs.get_audit_logs",
         mock_get_audit_logs,
     )
 
@@ -106,7 +106,7 @@ def test_audit_endpoint_rejects_invalid_pagination(
         pytest.fail("Database should not be queried for invalid pagination")
 
     monkeypatch.setattr(
-        "main.get_audit_logs",
+        "routers.audit_logs.get_audit_logs",
         unexpected_database_call,
     )
 
@@ -119,7 +119,7 @@ def test_audit_endpoint_returns_metadata_only(monkeypatch):
     app.dependency_overrides[get_current_user] = lambda: make_user("admin")
 
     monkeypatch.setattr(
-        "main.get_audit_logs",
+        "routers.audit_logs.get_audit_logs",
         lambda limit, offset: [
             {
                 "id": 1,

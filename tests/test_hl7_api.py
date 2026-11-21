@@ -37,7 +37,9 @@ def test_hl7_adt_endpoint_success():
 
     expected_result = {"status": "created", "patient_id": 123, "mrn": "MRN-000010"}
 
-    with patch("main.register_patient_from_hl7", return_value=expected_result) as mock_register:
+    with patch(
+        "routers.hl7.register_patient_from_hl7", return_value=expected_result
+    ) as mock_register:
         response = client.post("/hl7/adt", content=message, headers={"Content-Type": "text/plain"})
 
     assert response.status_code == 200
@@ -82,7 +84,9 @@ def test_hl7_adt_endpoint_duplicate_registration():
 
     expected_result = {"status": "already_exists", "patient_id": 123, "mrn": "MRN-000012"}
 
-    with patch("main.register_patient_from_hl7", return_value=expected_result) as mock_register:
+    with patch(
+        "routers.hl7.register_patient_from_hl7", return_value=expected_result
+    ) as mock_register:
         response = client.post("/hl7/adt", content=message, headers={"Content-Type": "text/plain"})
 
     assert response.status_code == 200
@@ -102,7 +106,7 @@ def test_hl7_adt_endpoint_a08_update():
 
     expected_result = {"status": "updated", "patient_id": 13, "mrn": "MRN-000020"}
 
-    with patch("main.update_patient_from_hl7", return_value=expected_result) as mock_update:
+    with patch("routers.hl7.update_patient_from_hl7", return_value=expected_result) as mock_update:
         response = client.post("/hl7/adt", content=message, headers={"Content-Type": "text/plain"})
 
     assert response.status_code == 200
@@ -298,6 +302,7 @@ def test_hl7_adt_endpoint_returns_application_error_ack(monkeypatch):
     from fastapi.testclient import TestClient
 
     import main
+    from routers import hl7 as hl7_router
 
     client = TestClient(main.app)
 
@@ -313,7 +318,7 @@ def test_hl7_adt_endpoint_returns_application_error_ack(monkeypatch):
     def simulate_database_failure(_message):
         raise RuntimeError("Simulated database failure")
 
-    monkeypatch.setattr(main, "register_patient_from_hl7", simulate_database_failure)
+    monkeypatch.setattr(hl7_router, "register_patient_from_hl7", simulate_database_failure)
 
     response = client.post(
         "/hl7/adt",
@@ -336,6 +341,7 @@ def test_hl7_adt_endpoint_defaults_to_json(monkeypatch):
     from fastapi.testclient import TestClient
 
     import main
+    from routers import hl7 as hl7_router
 
     control_id = f"JSONTEST-{uuid4().hex}"
 
@@ -349,7 +355,7 @@ def test_hl7_adt_endpoint_defaults_to_json(monkeypatch):
     def simulate_registration(_message):
         return {"status": "created", "patient_id": 123, "mrn": "MRN-JSON-TEST"}
 
-    monkeypatch.setattr(main, "register_patient_from_hl7", simulate_registration)
+    monkeypatch.setattr(hl7_router, "register_patient_from_hl7", simulate_registration)
 
     client = TestClient(main.app)
 

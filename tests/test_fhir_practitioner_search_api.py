@@ -44,7 +44,7 @@ def test_practitioner_search_returns_fhir_bundle(monkeypatch, role):
             }
         ], 2
 
-    monkeypatch.setattr("main.search_providers", fake_search)
+    monkeypatch.setattr("routers.fhir.search_providers", fake_search)
 
     token = create_access_token(1)
     response = client.get(
@@ -84,7 +84,7 @@ def test_practitioner_search_previous_page(monkeypatch):
         lambda user_id: make_user("admin"),
     )
     monkeypatch.setattr(
-        "main.search_providers",
+        "routers.fhir.search_providers",
         lambda **kwargs: ([], 2),
     )
 

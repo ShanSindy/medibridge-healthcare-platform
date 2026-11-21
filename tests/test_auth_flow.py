@@ -29,7 +29,7 @@ def test_complete_login_and_authenticated_request(monkeypatch):
         return None
 
     monkeypatch.setattr(
-        "main.authenticate_user",
+        "routers.auth.authenticate_user",
         fake_authenticate,
     )
 
@@ -83,7 +83,7 @@ def test_login_token_rejected_after_account_disabled(monkeypatch):
     }
 
     monkeypatch.setattr(
-        "main.authenticate_user",
+        "routers.auth.authenticate_user",
         lambda username, password: test_user,
     )
 

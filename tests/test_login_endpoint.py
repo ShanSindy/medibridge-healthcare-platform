@@ -20,7 +20,7 @@ def test_login_success(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "main.authenticate_user",
+        "routers.auth.authenticate_user",
         fake_authenticate,
     )
 
@@ -49,7 +49,7 @@ def test_login_success(monkeypatch):
 
 def test_login_wrong_password(monkeypatch):
     monkeypatch.setattr(
-        "main.authenticate_user",
+        "routers.auth.authenticate_user",
         lambda username, password: None,
     )
 
@@ -67,7 +67,7 @@ def test_login_wrong_password(monkeypatch):
 
 def test_login_nonexistent_user(monkeypatch):
     monkeypatch.setattr(
-        "main.authenticate_user",
+        "routers.auth.authenticate_user",
         lambda username, password: None,
     )
 
@@ -85,7 +85,7 @@ def test_login_nonexistent_user(monkeypatch):
 def test_login_disabled_user(monkeypatch):
     # authenticate_user returns None for disabled accounts.
     monkeypatch.setattr(
-        "main.authenticate_user",
+        "routers.auth.authenticate_user",
         lambda username, password: None,
     )
 

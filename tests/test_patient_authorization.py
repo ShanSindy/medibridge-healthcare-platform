@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 import main
 from auth_dependencies import get_current_user
+from routers import patients as patients_router
 
 client = TestClient(main.app)
 
@@ -95,7 +96,7 @@ def test_scheduler_can_read_patients(monkeypatch):
             return FakeCursor()
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "get_connection",
         lambda: FakeConnection(),
     )
@@ -147,7 +148,7 @@ def test_authorized_roles_can_create_patients(monkeypatch, role):
             return FakeCursor()
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "get_connection",
         lambda: FakeConnection(),
     )

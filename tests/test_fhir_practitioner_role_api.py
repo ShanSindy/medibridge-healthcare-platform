@@ -28,7 +28,7 @@ def test_authorized_role_can_read_fhir_practitioner_role(monkeypatch, role):
     )
 
     monkeypatch.setattr(
-        "main.get_provider_by_id",
+        "routers.fhir.get_provider_by_id",
         lambda provider_id: {
             "id": provider_id,
             "first_name": "Jane",
@@ -64,7 +64,7 @@ def test_missing_fhir_practitioner_role_returns_operation_outcome(
         lambda user_id: make_user("admin"),
     )
     monkeypatch.setattr(
-        "main.get_provider_by_id",
+        "routers.fhir.get_provider_by_id",
         lambda provider_id: None,
     )
 
