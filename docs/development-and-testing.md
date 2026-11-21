@@ -92,31 +92,47 @@ deliberate exclusion, so new modules must be added to it.
 
 ## Linting and formatting (Python)
 
-CI runs, on a clean checkout:
+CI runs these commands, with the pinned Ruff from `requirements-dev.txt`, on a clean
+checkout:
 
 ```bash
-ruff check .
+ruff check --output-format=github .
 ruff format --check .
 ```
 
-In a working copy, `ruff check .` also inspects any untracked Python files present (personal
-or scratch scripts), which CI never sees. To check exactly what CI checks, pass only tracked
-files:
+What they cover with the pinned Ruff (0.17.6):
+
+- `ruff check` lints Python files and `pyproject.toml`.
+- `ruff format --check` checks Python files **and Python code blocks inside Markdown
+  files**, such as the examples in `docs/`. A documentation change can therefore fail the
+  format check.
+
+**Authoritative check before pushing:** run the two CI commands above, unchanged, in a
+clean checkout of the commit you will push (for example a fresh `git clone`).
+
+**Convenient check in a working copy.** In a working copy, `.` also picks up untracked files
+(personal or scratch scripts) that CI never sees. To check only tracked files, pass them
+explicitly:
 
 ```bash
 # bash
-ruff check $(git ls-files '*.py')
-ruff format --check $(git ls-files '*.py')
+ruff check $(git ls-files '*.py' '*.md' 'pyproject.toml')
+ruff format --check $(git ls-files '*.py' '*.md' 'pyproject.toml')
 ```
 
 ```powershell
 # PowerShell
-ruff check (git ls-files '*.py')
-ruff format --check (git ls-files '*.py')
+ruff check (git ls-files '*.py' '*.md' 'pyproject.toml')
+ruff format --check (git ls-files '*.py' '*.md' 'pyproject.toml')
 ```
 
-To apply formatting to tracked files: `ruff format $(git ls-files '*.py')` (bash) or
-`ruff format (git ls-files '*.py')` (PowerShell).
+These matched the CI commands' results for the files tracked at the time they were
+written, but an explicit file list is not guaranteed to match Ruff's own discovery in every
+case (for example after a Ruff upgrade or a configuration change). Treat them as a quick
+check, not as a substitute for the clean-checkout run.
+
+To apply formatting to tracked files: `ruff format $(git ls-files '*.py' '*.md')` (bash) or
+`ruff format (git ls-files '*.py' '*.md')` (PowerShell).
 
 ## Frontend checks
 
