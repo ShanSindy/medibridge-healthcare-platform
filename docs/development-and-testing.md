@@ -62,6 +62,68 @@ because FastAPI includes routers lazily, and read some route attributes such as
 tests fail after an upgrade, check them before suspecting the application. The
 behavioural checks (real requests, the role matrix, OpenAPI) do not depend on them.
 
+## PostgreSQL integration tests
+
+The `tests/test_pg_*.py` modules check behaviour that depends on PostgreSQL itself:
+constraints, transactions, persisted state and concurrency. They use the same disposable
+database as every other test (created per run, emptied before and after each test, dropped
+at the end of a normal run); there is no separate database lifecycle.
+
+| Module | What it checks | Tests |
+|---|---|---|
+| `test_pg_appointments.py` | Overlap rules from migration 005 through the real routes: identical, partial, containing and contained intervals, back-to-back, other providers, UTC offsets, cancelled and completed appointments, updates | 14 |
+| `test_pg_concurrency.py` | Two transactions competing for the same appointment slot (A commits or rolls back) and the same HL7 control ID | 3 |
+| `test_pg_patient_audit.py` | Patient handlers commit the change and its audit event together, write none for rejected changes, and roll both back on failure | 7 |
+| `test_pg_providers.py` | Provider CRUD round trip; duplicate emails that differ only in case | 2 |
+| `test_pg_fhir_practitioners.py` | Practitioner and PractitionerRole read, search, paging and 404 against real rows | 6 |
+| `test_pg_auth.py` | Real users, sign-in, tokens, inactive users, roles, unique usernames and emails | 8 |
+| `test_pg_audit_logs.py` | Audit-log order (including the id tie-breaker) and paging | 7 |
+| `test_pg_schema.py` | Migration ledger and re-runs; constraints, foreign keys, indexes and `btree_gist` from the catalogs | 16 |
+
+Run them as a group or one module at a time (from the repository root, same in bash and
+PowerShell):
+
+```bash
+python -m pytest -k test_pg_
+python -m pytest tests/test_pg_appointments.py
+```
+
+What is real and what is not:
+
+- **Database.** Every test writes to and reads from the disposable database. Results are
+  checked through a separate connection that is verified to be this run's database (name,
+  OID, owner and marker, using the same checks as cleanup). IDs are always taken from
+  responses or `RETURNING`, because cleanup does not reset sequences.
+- **Authentication.** `test_pg_auth.py`, the HTTP wrong-scheme test in
+  `test_auth_dependencies.py` and one audit-log test sign in for real. Other modules override
+  the current user (with a real user row where audit events need one), because they test
+  data behaviour, not authentication.
+- **Injected failure.** `test_pg_patient_audit.py` has one deliberate fault: the handler's
+  audit call runs the real insert on the handler's connection, then raises, so the test can
+  check that both writes roll back. Nothing else is mocked in these modules.
+
+**Concurrency.** Each scenario uses three connections: A holds an uncommitted write, B runs
+the real service code in a worker thread, and an autocommit observer waits until
+`pg_blocking_pids()` shows A blocking B before A commits or rolls back. The service module's
+`get_connection` is wrapped for observation only (database identity, backend PID, timeouts);
+it returns the real connection. `PGOPTIONS` gives every connection in these tests, B's
+included, a 30 s lock timeout and a 45 s statement timeout; the observer waits at most 15 s,
+and the worker is joined for at most 60 s. If the worker cannot be shown to have finished,
+the run stops instead of continuing into cleanup. Blocking evidence is attached to each test
+with `record_property`; to see it in a JUnit report, add
+`-o junit_family=xunit1 --junitxml=report.xml`.
+
+**Synthetic data only.** Use fictional names, `example.org` addresses and obviously
+synthetic MRNs and message IDs.
+
+**Local runs as a superuser.** If `.env.test` allows a superuser, the suite prints a warning;
+CI runs these tests as the non-superuser `medibridge_tester` role.
+
+**Known limitation.** Two concurrent `ADT^A04` messages with the same MRN but different
+control IDs can fail with an unhandled `UniqueViolation` (HTTP 500 or an AE acknowledgment)
+instead of returning `already_exists`; the transaction rolls back cleanly. It is not covered
+by these tests and is planned as a separate correction.
+
 ## Coverage
 
 Run coverage **from the repository root**. This is the command CI uses:
@@ -194,14 +256,18 @@ it is currently not configured, so the checks are not enforced before merging.
 
 ## Latest reviewed measurements
 
-Measured locally on Windows at revision `b995c38` on 2026-11-21. This is a snapshot, not
-updated automatically; rerun the commands above for current figures.
+Measured locally on Windows on 2026-11-21, with the PostgreSQL integration tests added to the
+application code of revision `4e6ddc8`. This is a snapshot, not updated automatically; rerun
+the commands above for current figures.
 
 | Check | Result |
 |---|---|
-| Backend tests | 731 passed, 2 skipped (intentional) |
-| Combined coverage | 90.97% (enforced minimum 85%) |
+| Backend tests | 794 passed, 2 skipped (intentional), about 51 s |
+| PostgreSQL integration tests (`-k test_pg_`) | 63 passed, about 19 s |
+| Combined coverage | 92.66% (enforced minimum 85%) |
 | Frontend tests | 176 passed |
+
+Before the integration tests (revision `4e6ddc8`): 731 passed, 2 skipped, about 39 s, 90.97%.
 
 GitHub Actions reports a pass or fail result for each CI job; the figures above are local
 measurements, not taken from CI logs.
