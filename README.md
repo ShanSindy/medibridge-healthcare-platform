@@ -150,14 +150,27 @@ Scope, field mappings and limitations: [docs/interoperability.md](docs/interoper
 
 ![MediBridge dashboard in demo mode, showing summary cards for patients, providers, appointments and HL7 messages, an appointment activity chart and a patient demographics panel](docs/images/dashboard-demo.png)
 
-*Dashboard in demo mode. All figures come from synthetic records bundled with the frontend;
-no backend is involved.*
+*Dashboard in demo mode. All figures come from synthetic records bundled with the
+frontend; no backend is involved.*
 
-![MediBridge provider directory in demo mode, showing provider cards with specialty, location, phone and email, a search box and filters](docs/images/providers-demo.png)
+![MediBridge dashboard in API mode, signed in as a clinician, showing the total of six patients and their gender breakdown, a notice that other sections are unavailable in API mode, and the system status panel](docs/images/dashboard-api.png)
 
-*Provider directory in demo mode, with synthetic records bundled with the frontend. In API
-mode the same page lists providers from the backend, without the demo-only location and
-availability fields.*
+*Dashboard in API mode. The patient total and demographics come from `GET /patients` on a
+local backend with a database of synthetic records. Sections the API cannot supply are
+hidden, and the database status is shown as "Not reported" because `/health` does not
+check it.*
+
+![MediBridge patient registry in API mode, listing six synthetic patients with name, ID, date of birth, age and gender, and a notice that contact and care fields are not returned by the backend](docs/images/patients-api.png)
+
+*Patient registry in API mode, showing the synthetic records stored in a local database.
+The backend returns only name, date of birth and gender, so the demo-only columns are
+hidden.*
+
+![MediBridge provider directory in API mode, listing three synthetic providers with specialty, phone and email, and a notice that credentials, department, location and availability are not stored by the backend](docs/images/providers-api.png)
+
+*Provider directory in API mode, read from `GET /providers` (synthetic records in a local
+database). Appointments, FHIR Explorer, HL7 Integration and Audit Logs do not read from
+the API in either mode.*
 
 ## Engineering quality
 

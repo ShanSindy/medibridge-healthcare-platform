@@ -153,6 +153,15 @@ partially displayed.
 The Providers page is a searchable directory with a detail view for each
 provider.
 
+![Provider directory in demo mode, showing synthetic provider cards with specialty, credentials, location, availability, phone and email](../docs/images/providers-demo.png)
+
+*Demo mode: synthetic records bundled with the dashboard.*
+
+![Provider directory in API mode, showing three synthetic providers from the backend with specialty, phone and email only](../docs/images/providers-api.png)
+
+*API mode: synthetic records read from `GET /providers` on a local backend. Fields the
+backend does not store are not shown.*
+
 | | Demo mode | API mode |
 |---|---|---|
 | Directory | Synthetic records | `GET /providers` |
