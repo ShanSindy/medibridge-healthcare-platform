@@ -169,8 +169,11 @@ def test_appointment_overlap_exclusion_constraint(db):
 
     assert (contype, method, operators) == ("x", "gist", ["=", "&&"])
     assert columns[0] == "provider_id"
-    assert re.fullmatch(r"tstzrange\(starts_at, ends_at, '\[\)'::text\)", columns[1])
-    assert re.fullmatch(r"\(+status\)::text = 'scheduled'::text\)*", predicate)
+    range_pattern = r"tstzrange\(starts_at, ends_at, '\[\)'::text\)"
+    assert re.fullmatch(range_pattern, columns[1]), f"unexpected range column: {columns[1]}"
+    assert predicate is not None, "the exclusion constraint has no WHERE predicate"
+    scheduled_only = r"\(+status\)::text = 'scheduled'::text\)*"
+    assert re.fullmatch(scheduled_only, predicate), f"unexpected predicate: {predicate}"
 
 
 def test_check_constraints(db):
