@@ -47,7 +47,16 @@ def test_router_does_not_import_main_or_other_routers(path):
         top = module.split(".")[0]
         assert top != "main", f"{path.name} imports {module}"
         assert top != "routers", f"{path.name} imports {module}"
-        assert module not in ROUTER_MODULES, f"{path.name} imports {module}"
+    # Router modules are only importable as routers.<name>, so a bare import such
+    # as `from fhir import ...` refers to the top-level helper module, not a router.
+
+
+def test_fhir_router_uses_the_top_level_fhir_helpers():
+    import fhir
+    import routers.fhir
+
+    assert routers.fhir.create_operation_outcome is fhir.create_operation_outcome
+    assert routers.fhir.patient_to_fhir is fhir.patient_to_fhir
 
 
 @pytest.mark.parametrize("name", ROUTER_MODULES)

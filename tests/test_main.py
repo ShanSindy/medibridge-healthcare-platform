@@ -374,7 +374,7 @@ def test_get_fhir_patients_empty_bundle(monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    monkeypatch.setattr("main.get_connection", lambda: FakeConnection())
+    monkeypatch.setattr("routers.fhir.get_connection", lambda: FakeConnection())
 
     response = client.get("/fhir/Patient")
 

@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 import main
 from auth_dependencies import get_current_user
+from routers import fhir as fhir_router
 
 client = TestClient(main.app)
 
@@ -94,13 +95,13 @@ def test_clinician_can_read_fhir_patient(monkeypatch):
             return FakeCursor()
 
     monkeypatch.setattr(
-        main,
+        fhir_router,
         "get_connection",
         lambda: FakeConnection(),
     )
 
     monkeypatch.setattr(
-        main,
+        fhir_router,
         "get_patient_identifiers",
         lambda patient_id: [],
     )
@@ -154,13 +155,13 @@ def test_scheduler_can_search_fhir_patients(monkeypatch):
             return FakeCursor()
 
     monkeypatch.setattr(
-        main,
+        fhir_router,
         "get_connection",
         lambda: FakeConnection(),
     )
 
     monkeypatch.setattr(
-        main,
+        fhir_router,
         "get_identifiers_for_patients",
         lambda patient_ids: {},
     )
