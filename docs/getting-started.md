@@ -162,9 +162,11 @@ database and role you are connected to:
 from database import get_connection
 
 with get_connection() as conn:
-    print(conn.execute(
-        "SELECT current_database(), current_user, inet_server_addr(), inet_server_port()"
-    ).fetchone())
+    print(
+        conn.execute(
+            "SELECT current_database(), current_user, inet_server_addr(), inet_server_port()"
+        ).fetchone()
+    )
 ```
 
 **Stop if that is not your development database.** Otherwise paste the second block in
