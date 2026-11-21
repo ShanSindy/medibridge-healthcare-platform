@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 import main
 from auth_dependencies import get_current_user
+from routers import patients as patients_router
 
 client = TestClient(main.app)
 
@@ -54,13 +55,13 @@ def test_patient_creation_records_audit_event(monkeypatch):
         captured_audit.update(kwargs)
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "get_connection",
         lambda: fake_connection,
     )
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "log_audit_event",
         fake_log_audit_event,
     )
@@ -148,13 +149,13 @@ def test_patient_creation_rolls_back_when_audit_fails(monkeypatch):
         raise RuntimeError("Simulated audit database failure")
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "get_connection",
         lambda: fake_connection,
     )
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "log_audit_event",
         failing_audit_logger,
     )
@@ -229,13 +230,13 @@ def test_patient_update_records_audit_event(monkeypatch):
         captured_audit.update(kwargs)
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "get_connection",
         lambda: fake_connection,
     )
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "log_audit_event",
         fake_log_audit_event,
     )
@@ -322,13 +323,13 @@ def test_patient_update_rolls_back_when_audit_fails(monkeypatch):
         raise RuntimeError("Simulated audit database failure")
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "get_connection",
         lambda: fake_connection,
     )
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "log_audit_event",
         failing_audit_logger,
     )
@@ -397,13 +398,13 @@ def test_patient_deletion_records_audit_event(monkeypatch):
         captured_audit.update(kwargs)
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "get_connection",
         lambda: fake_connection,
     )
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "log_audit_event",
         fake_log_audit_event,
     )
@@ -475,13 +476,13 @@ def test_patient_deletion_rolls_back_when_audit_fails(monkeypatch):
         raise RuntimeError("Simulated audit database failure")
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "get_connection",
         lambda: fake_connection,
     )
 
     monkeypatch.setattr(
-        main,
+        patients_router,
         "log_audit_event",
         failing_audit_logger,
     )

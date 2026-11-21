@@ -94,6 +94,7 @@ include = [
     "routers/appointments.py",
     "routers/audit_logs.py",
     "routers/auth.py",
+    "routers/patients.py",
     "routers/providers.py",
     "routers/system.py",
     # Migration logic
