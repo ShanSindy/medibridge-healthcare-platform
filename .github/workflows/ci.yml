@@ -7,66 +7,216 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Read-only token for every job; nothing in this workflow writes to the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Superseded pull-request runs are cancelled; every push to main is validated.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
-    name: FastAPI and PostgreSQL Tests
+  backend:
+    name: Backend (lint, format, tests, coverage)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     services:
       postgres:
         image: postgres:18
+        # Throwaway container superuser. Only the "Create least-privileged test
+        # role" step uses it; the tests never do.
         env:
           POSTGRES_USER: medibridge
-          POSTGRES_PASSWORD: ci_test_password
-          POSTGRES_DB: medibridge_test
+          POSTGRES_PASSWORD: ci_container_superuser_password_not_for_production
+          POSTGRES_DB: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U medibridge -d medibridge_test"
+          --health-cmd "pg_isready -U medibridge -d postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
-    env:
-      DB_HOST: localhost
-      DB_PORT: "5432"
-      DB_NAME: medibridge_test
-      DB_USER: medibridge
-      DB_PASSWORD: ci_test_password
-      SECRET_KEY: ci_only_test_secret_key_not_for_production
-      JWT_SECRET_KEY: medibridge_ci_testing_only_jwt_secret_key_2026_not_for_production_123456789
-
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+          python -m pip check
 
-      - name: Apply database migrations
-        run: python migrate.py
+      - name: Ruff lint
+        run: ruff check --output-format=github .
 
-      # The tests create and drop their own disposable database, so they run
-      # as a role with only LOGIN and CREATEDB, not as the container superuser.
-      # Test-only credentials for the throwaway CI container.
+      - name: Ruff format check
+        run: ruff format --check .
+
+      # The test suite creates and drops its own disposable database, so it
+      # runs as a role with only LOGIN and CREATEDB. The role password and the
+      # JWT signing key are random per run and masked in logs.
+      #
+      # The container superuser password above is public (it is in this file),
+      # so this step replaces it with a random value that is never stored, and
+      # checks that the original no longer authenticates over TCP. This keeps
+      # later steps from using the published password; it is not a boundary
+      # against arbitrary code on the runner, which can reach the container
+      # directly (for example with `docker exec`).
       - name: Create least-privileged test role
         env:
-          PGPASSWORD: ci_test_password
-        run: >-
-          psql -h localhost -U medibridge -d postgres -v ON_ERROR_STOP=1
-          -c "CREATE ROLE medibridge_tester LOGIN CREATEDB NOSUPERUSER NOCREATEROLE
-          PASSWORD 'ci_tester_password_not_for_production'"
+          PGPASSWORD: ci_container_superuser_password_not_for_production
+        run: |
+          tester_password="$(openssl rand -hex 24)"
+          jwt_secret="$(openssl rand -hex 32)"
+          superuser_password="$(openssl rand -hex 32)"
+          echo "::add-mask::${tester_password}"
+          echo "::add-mask::${jwt_secret}"
+          echo "::add-mask::${superuser_password}"
+          # Secrets reach psql only through standard input, never as arguments.
+          psql -h localhost -U medibridge -d postgres -v ON_ERROR_STOP=1 --quiet <<SQL
+          CREATE ROLE medibridge_tester LOGIN CREATEDB NOSUPERUSER NOCREATEROLE NOREPLICATION
+            PASSWORD '${tester_password}';
+          ALTER ROLE medibridge PASSWORD '${superuser_password}';
+          SQL
+          unset superuser_password
 
-      - name: Run automated tests
+          # The published provisioning password must no longer authenticate.
+          if psql -h localhost -U medibridge -d postgres -tAc "SELECT 1" > /dev/null 2>&1; then
+            echo "::error::The original superuser password still authenticates."
+            exit 1
+          fi
+          # The test role authenticates and has exactly the expected privileges.
+          privileges="$(PGPASSWORD="${tester_password}" psql -h localhost -U medibridge_tester \
+            -d postgres -tA -v ON_ERROR_STOP=1 \
+            -c "SELECT rolsuper, rolcreatedb FROM pg_roles WHERE rolname = current_user")"
+          if [ "${privileges}" != "f|t" ]; then
+            echo "::error::Unexpected test role privileges: ${privileges}"
+            exit 1
+          fi
+
+          {
+            echo "DB_PASSWORD=${tester_password}"
+            echo "JWT_SECRET_KEY=${jwt_secret}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Run tests with coverage
         env:
           MEDIBRIDGE_ENV: test
+          DB_HOST: localhost
+          DB_PORT: "5432"
           DB_USER: medibridge_tester
-          DB_PASSWORD: ci_tester_password_not_for_production
-        run: python -m pytest -q --tb=short
+        run: >-
+          python -m pytest -q --tb=short -rs
+          --cov --cov-report=term-missing:skip-covered
+          --cov-report=json:coverage.json --cov-report=xml:coverage.xml
+
+      - name: Coverage summary
+        if: ${{ !cancelled() && hashFiles('coverage.json') != '' }}
+        run: python scripts/coverage_summary.py coverage.json
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() && hashFiles('coverage.json') != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-coverage
+          path: |
+            coverage.json
+            coverage.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  frontend:
+    name: Frontend (lint, type-check, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies from the lockfile
+        run: npm ci --no-audit --no-fund
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: TypeScript type-check
+        run: npx --no-install tsc -b
+
+      - name: Unit tests
+        # Single run (vitest run); terminates instead of watching.
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+  security:
+    name: Dependency security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pip check
+
+      # Audits the installed environment: runtime, test and dev packages and
+      # all their transitive dependencies. --strict fails if any package
+      # cannot be audited, and any network or service error fails the step.
+      - name: pip-audit (fail on any known vulnerability)
+        run: pip-audit --strict --progress-spinner off
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+
+      # npm audit reads package-lock.json; no install needed. It exits non-zero
+      # on findings at or above the level, and on registry errors.
+      - name: npm audit, production dependencies (fail at moderate or higher)
+        working-directory: frontend
+        run: npm audit --omit=dev --audit-level=moderate
+
+      - name: npm audit, all dependencies (fail at high or higher)
+        working-directory: frontend
+        run: npm audit --audit-level=high

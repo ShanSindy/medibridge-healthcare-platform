@@ -1,9 +1,8 @@
-
+import pytest
 from fastapi.testclient import TestClient
 
-import main, pytest
+import main
 from auth_dependencies import get_current_user
-
 
 client = TestClient(main.app)
 
@@ -93,6 +92,7 @@ def test_patient_creation_records_audit_event(monkeypatch):
         main.app.dependency_overrides.clear()
         main.app.dependency_overrides.update(original_overrides)
 
+
 def test_patient_creation_rolls_back_when_audit_fails(monkeypatch):
     original_overrides = main.app.dependency_overrides.copy()
 
@@ -181,6 +181,7 @@ def test_patient_creation_rolls_back_when_audit_fails(monkeypatch):
         main.app.dependency_overrides.clear()
         main.app.dependency_overrides.update(original_overrides)
 
+
 def test_patient_update_records_audit_event(monkeypatch):
     original_overrides = main.app.dependency_overrides.copy()
 
@@ -264,6 +265,7 @@ def test_patient_update_records_audit_event(monkeypatch):
     finally:
         main.app.dependency_overrides.clear()
         main.app.dependency_overrides.update(original_overrides)
+
 
 def test_patient_update_rolls_back_when_audit_fails(monkeypatch):
     original_overrides = main.app.dependency_overrides.copy()
@@ -353,6 +355,7 @@ def test_patient_update_rolls_back_when_audit_fails(monkeypatch):
         main.app.dependency_overrides.clear()
         main.app.dependency_overrides.update(original_overrides)
 
+
 def test_patient_deletion_records_audit_event(monkeypatch):
     original_overrides = main.app.dependency_overrides.copy()
 
@@ -421,6 +424,7 @@ def test_patient_deletion_records_audit_event(monkeypatch):
     finally:
         main.app.dependency_overrides.clear()
         main.app.dependency_overrides.update(original_overrides)
+
 
 def test_patient_deletion_rolls_back_when_audit_fails(monkeypatch):
     original_overrides = main.app.dependency_overrides.copy()

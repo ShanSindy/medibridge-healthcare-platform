@@ -1,8 +1,7 @@
-
 from fastapi.testclient import TestClient
-from token_service import create_access_token
-from main import app
 
+from main import app
+from token_service import create_access_token
 
 client = TestClient(app)
 
@@ -11,18 +10,14 @@ def test_auth_me_requires_token():
     response = client.get("/auth/me")
 
     assert response.status_code == 401
-    assert response.json()["detail"] == (
-        "Invalid or missing authentication credentials"
-    )
+    assert response.json()["detail"] == ("Invalid or missing authentication credentials")
     assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_auth_me_rejects_invalid_token():
     response = client.get(
         "/auth/me",
-        headers={
-            "Authorization": "Bearer invalid-token"
-        },
+        headers={"Authorization": "Bearer invalid-token"},
     )
 
     assert response.status_code == 401
@@ -31,12 +26,11 @@ def test_auth_me_rejects_invalid_token():
 def test_auth_me_rejects_wrong_auth_scheme():
     response = client.get(
         "/auth/me",
-        headers={
-            "Authorization": "Basic invalid-credentials"
-        },
+        headers={"Authorization": "Basic invalid-credentials"},
     )
 
     assert response.status_code == 401
+
 
 def test_auth_me_accepts_valid_token(monkeypatch):
     token = create_access_token(1)
@@ -59,9 +53,7 @@ def test_auth_me_accepts_valid_token(monkeypatch):
 
     response = client.get(
         "/auth/me",
-        headers={
-            "Authorization": f"Bearer {token}"
-        },
+        headers={"Authorization": f"Bearer {token}"},
     )
 
     assert response.status_code == 200

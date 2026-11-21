@@ -1,15 +1,12 @@
-
 from database import get_connection
 from hl7_parser import (
+    extract_hl7_message_metadata,
     parse_hl7_message,
     process_hl7_adt_message,
-    extract_hl7_message_metadata,
 )
 from hl7_tracking import record_hl7_message
 
-
 HL7_MRN_SYSTEM = "https://medibridge.example.org/mrn"
-
 
 
 def register_patient_from_hl7(message: str) -> dict:
@@ -22,24 +19,20 @@ def register_patient_from_hl7(message: str) -> dict:
     segments = parse_hl7_message(message)
 
     if segments["MSH"][0][8] != "ADT^A04":
-        raise ValueError(
-            "Patient registration requires an ADT^A04 message."
-        )
+        raise ValueError("Patient registration requires an ADT^A04 message.")
 
     patient = process_hl7_adt_message(message)
     metadata = extract_hl7_message_metadata(segments)
 
     with get_connection() as conn:
         with conn.cursor() as cur:
-            is_new_message = record_hl7_message(
-                cur, metadata
-            )
+            is_new_message = record_hl7_message(cur, metadata)
 
             if not is_new_message:
                 return {
                     "status": "duplicate",
                     "mrn": patient["mrn"],
-                    "message_control_id": metadata["message_control_id"]
+                    "message_control_id": metadata["message_control_id"],
                 }
 
             cur.execute(
@@ -48,7 +41,7 @@ def register_patient_from_hl7(message: str) -> dict:
                 FROM patient_identifiers
                 WHERE system = %s AND value = %s
                 """,
-                (HL7_MRN_SYSTEM, patient["mrn"])
+                (HL7_MRN_SYSTEM, patient["mrn"]),
             )
 
             existing = cur.fetchone()
@@ -57,7 +50,7 @@ def register_patient_from_hl7(message: str) -> dict:
                 return {
                     "status": "already_exists",
                     "patient_id": existing[0],
-                    "mrn": patient["mrn"]
+                    "mrn": patient["mrn"],
                 }
 
             cur.execute(
@@ -71,8 +64,8 @@ def register_patient_from_hl7(message: str) -> dict:
                     patient["first_name"],
                     patient["last_name"],
                     patient["date_of_birth"],
-                    patient["gender"]
-                )
+                    patient["gender"],
+                ),
             )
 
             patient_id = cur.fetchone()[0]
@@ -83,19 +76,10 @@ def register_patient_from_hl7(message: str) -> dict:
                     (patient_id, system, value)
                 VALUES (%s, %s, %s)
                 """,
-                (
-                    patient_id,
-                    HL7_MRN_SYSTEM,
-                    patient["mrn"]
-                )
+                (patient_id, HL7_MRN_SYSTEM, patient["mrn"]),
             )
 
-    return {
-        "status": "created",
-        "patient_id": patient_id,
-        "mrn": patient["mrn"]
-    }
-
+    return {"status": "created", "patient_id": patient_id, "mrn": patient["mrn"]}
 
 
 def update_patient_from_hl7(message: str) -> dict:
@@ -108,9 +92,7 @@ def update_patient_from_hl7(message: str) -> dict:
     segments = parse_hl7_message(message)
 
     if segments["MSH"][0][8] != "ADT^A08":
-        raise ValueError(
-            "Patient updates require an ADT^A08 message."
-        )
+        raise ValueError("Patient updates require an ADT^A08 message.")
 
     patient = process_hl7_adt_message(message)
     metadata = extract_hl7_message_metadata(segments)
@@ -118,15 +100,13 @@ def update_patient_from_hl7(message: str) -> dict:
     with get_connection() as conn:
         with conn.cursor() as cur:
             # Record the message before modifying patient data.
-            is_new_message = record_hl7_message(
-                cur, metadata
-            )
+            is_new_message = record_hl7_message(cur, metadata)
 
             if not is_new_message:
                 return {
                     "status": "duplicate",
                     "mrn": patient["mrn"],
-                    "message_control_id": metadata["message_control_id"]
+                    "message_control_id": metadata["message_control_id"],
                 }
 
             # Update the patient identified by the MRN.
@@ -150,21 +130,15 @@ def update_patient_from_hl7(message: str) -> dict:
                     patient["date_of_birth"],
                     patient["gender"],
                     HL7_MRN_SYSTEM,
-                    patient["mrn"]
-                )
+                    patient["mrn"],
+                ),
             )
 
             updated = cur.fetchone()
 
             if updated is None:
-                raise ValueError(
-                    "Cannot update patient: MRN not found."
-                )
+                raise ValueError("Cannot update patient: MRN not found.")
 
             patient_id = updated[0]
 
-    return {
-        "status": "updated",
-        "patient_id": patient_id,
-        "mrn": patient["mrn"]
-    }
+    return {"status": "updated", "patient_id": patient_id, "mrn": patient["mrn"]}

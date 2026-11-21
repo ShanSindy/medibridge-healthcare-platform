@@ -39,7 +39,9 @@ def scratch(test_database_config):
     assert db_safety.is_disposable_name(database.name)
     assert not db_safety.is_session_database(database.name)
     with _admin(test_database_config) as admin:
-        admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(database.name)))
+        admin.execute(
+            sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(database.name))
+        )
 
 
 def test_normal_lifecycle_records_identity_marks_and_drops(scratch, test_database_config):
@@ -56,7 +58,9 @@ def test_normal_lifecycle_records_identity_marks_and_drops(scratch, test_databas
     assert _identity(test_database_config, scratch.name) is None
 
 
-def test_marker_failure_still_drops_the_database_this_process_created(scratch, test_database_config, monkeypatch):
+def test_marker_failure_still_drops_the_database_this_process_created(
+    scratch, test_database_config, monkeypatch
+):
     def failing_marker(admin):
         raise RuntimeError("simulated COMMENT ON DATABASE failure")
 
@@ -76,7 +80,9 @@ def test_marker_failure_still_drops_the_database_this_process_created(scratch, t
     assert _identity(test_database_config, scratch.name) is None
 
 
-def test_unrecorded_identity_means_the_database_is_not_dropped(scratch, test_database_config, monkeypatch):
+def test_unrecorded_identity_means_the_database_is_not_dropped(
+    scratch, test_database_config, monkeypatch
+):
     def failing_identity(admin):
         raise RuntimeError("simulated failure before the OID was recorded")
 
@@ -84,7 +90,8 @@ def test_unrecorded_identity_means_the_database_is_not_dropped(scratch, test_dat
 
     with pytest.raises(RuntimeError, match="simulated"):
         scratch.create()
-    assert scratch.create_attempted and scratch.created is None
+    assert scratch.create_attempted
+    assert scratch.created is None
 
     with pytest.raises(db_safety.UnsafeTestDatabase, match="ownership cannot be established"):
         scratch.drop()
@@ -102,7 +109,9 @@ def test_a_database_replaced_under_the_same_name_is_not_dropped(scratch, test_da
         admin.execute(sql.SQL("DROP DATABASE {}").format(name))
         admin.execute(sql.SQL("CREATE DATABASE {}").format(name))
         admin.execute(
-            sql.SQL("COMMENT ON DATABASE {} IS {}").format(name, sql.Literal(db_safety.OWNERSHIP_MARKER))
+            sql.SQL("COMMENT ON DATABASE {} IS {}").format(
+                name, sql.Literal(db_safety.OWNERSHIP_MARKER)
+            )
         )
     assert _identity(test_database_config, scratch.name)[0] != original_oid
 
@@ -115,7 +124,9 @@ def test_a_database_replaced_under_the_same_name_is_not_dropped(scratch, test_da
 def test_a_removed_marker_blocks_the_drop(scratch, test_database_config):
     scratch.create()
     with _admin(test_database_config) as admin:
-        admin.execute(sql.SQL("COMMENT ON DATABASE {} IS NULL").format(sql.Identifier(scratch.name)))
+        admin.execute(
+            sql.SQL("COMMENT ON DATABASE {} IS NULL").format(sql.Identifier(scratch.name))
+        )
 
     with pytest.raises(db_safety.UnsafeTestDatabase, match="ownership marker"):
         scratch.drop()
@@ -142,7 +153,7 @@ def test_tables_outside_the_supported_schema_stop_cleanup(scratch):
     conn.execute("CREATE SCHEMA reporting")
     conn.execute("CREATE TABLE reporting.synthetic_summary (id integer)")
 
-    with pytest.raises(db_safety.UnsafeTestDatabase, match="reporting.synthetic_summary"):
+    with pytest.raises(db_safety.UnsafeTestDatabase, match=r"reporting\.synthetic_summary"):
         scratch.clean()
 
     # Nothing was truncated: the run stops instead of cleaning partially.

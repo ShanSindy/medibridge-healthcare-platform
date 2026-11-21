@@ -1,4 +1,3 @@
-
 """Centralized role permissions for MediBridge."""
 
 PERMISSIONS = {
@@ -17,9 +16,7 @@ PERMISSIONS = {
         "scheduler",
         "viewer",
     ),
-    "providers:write": (
-        "admin",
-    ),
+    "providers:write": ("admin",),
     "appointments:read": (
         "admin",
         "clinician",
@@ -29,23 +26,15 @@ PERMISSIONS = {
         "admin",
         "scheduler",
     ),
-
-    "users:manage": (
-        "admin",
-    ),
-    "audit:read": (
-        "admin",
-    ),
+    "users:manage": ("admin",),
+    "audit:read": ("admin",),
 }
-
 
 
 def get_allowed_roles(permission: str) -> tuple[str, ...]:
     """Return roles authorized for a named permission."""
 
     if permission not in PERMISSIONS:
-        raise ValueError(
-            f"Unknown permission: {permission}"
-        )
+        raise ValueError(f"Unknown permission: {permission}")
 
     return PERMISSIONS[permission]

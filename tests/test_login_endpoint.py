@@ -1,9 +1,7 @@
-
 from fastapi.testclient import TestClient
 
 from main import app
 from token_service import verify_access_token
-
 
 client = TestClient(app)
 
@@ -64,9 +62,7 @@ def test_login_wrong_password(monkeypatch):
     )
 
     assert response.status_code == 401
-    assert response.json()["detail"] == (
-        "Incorrect username or password"
-    )
+    assert response.json()["detail"] == ("Incorrect username or password")
 
 
 def test_login_nonexistent_user(monkeypatch):

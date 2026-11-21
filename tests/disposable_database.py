@@ -30,13 +30,16 @@ class DisposableDatabase:
     # --- connections ---------------------------------------------------------------
 
     def admin_connection(self) -> psycopg.Connection:
-        return psycopg.connect(**self.config.connect_kwargs(self.config.maintenance_db), autocommit=True)
+        return psycopg.connect(
+            **self.config.connect_kwargs(self.config.maintenance_db), autocommit=True
+        )
 
     def role_status(self) -> tuple[bool, bool, bool]:
         """(is_superuser, can_create_db, in_recovery) for the configured role."""
         with self.admin_connection() as admin:
             return admin.execute(
-                "SELECT rolsuper, rolcreatedb, pg_is_in_recovery() FROM pg_roles WHERE rolname = current_user"
+                "SELECT rolsuper, rolcreatedb, pg_is_in_recovery() "
+                "FROM pg_roles WHERE rolname = current_user"
             ).fetchone()
 
     def abandoned_databases(self) -> list[str]:
@@ -106,7 +109,9 @@ class DisposableDatabase:
         tables = db_safety.cleanup_targets(conn.execute(db_safety.TABLES_QUERY).fetchall())
         identifiers = [sql.Identifier(table) for table in tables]
         has_rows = sql.SQL("SELECT {}").format(
-            sql.SQL(" OR ").join(sql.SQL("EXISTS (SELECT 1 FROM {})").format(name) for name in identifiers)
+            sql.SQL(" OR ").join(
+                sql.SQL("EXISTS (SELECT 1 FROM {})").format(name) for name in identifiers
+            )
         )
         if conn.execute(has_rows).fetchone()[0]:
             conn.execute(sql.SQL("TRUNCATE {} CASCADE").format(sql.SQL(", ").join(identifiers)))
@@ -133,7 +138,9 @@ class DisposableDatabase:
                     current_role_oid=current_role_oid,
                     require_marker=self.marker_written,
                 )
-                admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(self.name)))
+                admin.execute(
+                    sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(self.name))
+                )
         except Exception as exc:
             self.drop_error = f"{type(exc).__name__}: {exc}"
             raise

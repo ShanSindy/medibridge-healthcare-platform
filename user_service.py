@@ -1,4 +1,3 @@
-
 from database import get_connection
 from security import hash_password
 
@@ -42,6 +41,7 @@ def create_user(
         "created_at": row[5],
     }
 
+
 def get_user_by_username(username: str) -> dict | None:
     """Retrieve a user account by username for authentication."""
 
@@ -75,6 +75,7 @@ def get_user_by_username(username: str) -> dict | None:
         "is_active": row[5],
         "created_at": row[6],
     }
+
 
 def get_user_by_id(user_id: int) -> dict | None:
     """Retrieve a user account by its ID."""

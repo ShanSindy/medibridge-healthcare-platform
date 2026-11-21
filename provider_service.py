@@ -1,4 +1,3 @@
-
 from database import get_connection
 from models import ProviderCreate
 
@@ -86,6 +85,7 @@ def get_all_providers() -> list[dict]:
         for row in rows
     ]
 
+
 def get_provider_by_id(provider_id: int) -> dict | None:
     """
     Retrieve a healthcare provider by ID.
@@ -123,6 +123,7 @@ def get_provider_by_id(provider_id: int) -> dict | None:
         "phone": row[5],
         "created_at": row[6],
     }
+
 
 def update_provider(
     provider_id: int,
@@ -178,6 +179,7 @@ def update_provider(
         "created_at": row[6],
     }
 
+
 def delete_provider(provider_id: int) -> bool:
     """
     Delete a healthcare provider by ID.
@@ -211,11 +213,7 @@ def search_providers(
     """Search providers with filters and database pagination."""
 
     def prefix_pattern(value: str) -> str:
-        escaped = (
-            value.replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
+        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return f"{escaped}%"
 
     conditions = []
@@ -233,14 +231,12 @@ def search_providers(
         conditions.append("specialty ILIKE %s")
         params.append(prefix_pattern(specialty))
 
-    where_clause = (
-        "WHERE " + " AND ".join(conditions)
-        if conditions
-        else ""
-    )
+    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     with get_connection() as conn:
         with conn.cursor() as cur:
+            # S608 reviewed: the WHERE clause is assembled only from fixed SQL fragments in this
+            # function, and every user-supplied value is passed separately as a %s parameter.
             cur.execute(
                 f"""
                 SELECT
@@ -250,17 +246,18 @@ def search_providers(
                 {where_clause}
                 ORDER BY id
                 LIMIT %s OFFSET %s
-                """,
+                """,  # noqa: S608
                 (*params, count, offset),
             )
             rows = cur.fetchall()
 
+            # S608 reviewed: same fixed WHERE fragments and parameters as above.
             cur.execute(
                 f"""
                 SELECT COUNT(*)
                 FROM providers
                 {where_clause}
-                """,
+                """,  # noqa: S608
                 tuple(params),
             )
             total = cur.fetchone()[0]

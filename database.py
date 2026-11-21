@@ -1,4 +1,3 @@
-
 import os
 
 import psycopg
@@ -16,6 +15,7 @@ def get_connection():
         password=os.getenv("DB_PASSWORD"),
     )
 
+
 def get_patient_identifiers(patient_id: int) -> list[dict]:
     with get_connection() as conn:
         with conn.cursor() as cursor:
@@ -26,22 +26,15 @@ def get_patient_identifiers(patient_id: int) -> list[dict]:
                 WHERE patient_id = %s
                 ORDER BY id
                 """,
-                (patient_id,)
+                (patient_id,),
             )
 
             rows = cursor.fetchall()
 
-    return [
-        {
-            "system": row[0],
-            "value": row[1]
-        }
-        for row in rows
-    ]
+    return [{"system": row[0], "value": row[1]} for row in rows]
 
-def get_identifiers_for_patients(
-    patient_ids: list[int]
-) -> dict[int, list[dict]]:
+
+def get_identifiers_for_patients(patient_ids: list[int]) -> dict[int, list[dict]]:
     if not patient_ids:
         return {}
 
@@ -54,20 +47,14 @@ def get_identifiers_for_patients(
                 WHERE patient_id = ANY(%s)
                 ORDER BY patient_id, id
                 """,
-                (patient_ids,)
+                (patient_ids,),
             )
 
             rows = cursor.fetchall()
 
-    identifiers_by_patient = {
-        patient_id: []
-        for patient_id in patient_ids
-    }
+    identifiers_by_patient = {patient_id: [] for patient_id in patient_ids}
 
     for patient_id, system, value in rows:
-        identifiers_by_patient[patient_id].append({
-            "system": system,
-            "value": value
-        })
+        identifiers_by_patient[patient_id].append({"system": system, "value": value})
 
     return identifiers_by_patient

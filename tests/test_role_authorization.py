@@ -1,4 +1,3 @@
-
 import pytest
 from fastapi import HTTPException
 
@@ -59,10 +58,10 @@ def test_single_role_allowed():
 
 
 def test_no_roles_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="At least one role must be specified"):
         require_roles()
 
 
 def test_unknown_role_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Unknown authorization role"):
         require_roles("superuser")

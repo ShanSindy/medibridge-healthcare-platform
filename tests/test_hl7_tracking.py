@@ -1,5 +1,5 @@
-
 from uuid import uuid4
+
 from database import get_connection
 from hl7_tracking import (
     get_processed_hl7_message,
@@ -18,6 +18,7 @@ def test_get_processed_hl7_message_not_found():
     result = get_processed_hl7_message(metadata)
 
     assert result is None
+
 
 def test_get_processed_hl7_message_found():
     control_id = f"TEST-{uuid4()}"
@@ -90,13 +91,9 @@ def test_record_hl7_message_prevents_duplicates():
     with get_connection() as conn:
         try:
             with conn.cursor() as cur:
-                first_result = record_hl7_message(
-                    cur, metadata
-                )
+                first_result = record_hl7_message(cur, metadata)
 
-                second_result = record_hl7_message(
-                    cur, metadata
-                )
+                second_result = record_hl7_message(cur, metadata)
 
                 cur.execute(
                     """

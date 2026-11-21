@@ -4,7 +4,6 @@ from fastapi.testclient import TestClient
 from main import app
 from token_service import create_access_token
 
-
 client = TestClient(app)
 
 
@@ -22,9 +21,7 @@ def make_user(role):
     "role",
     ["admin", "clinician", "scheduler", "viewer"],
 )
-def test_authorized_role_can_read_fhir_practitioner(
-    monkeypatch, role
-):
+def test_authorized_role_can_read_fhir_practitioner(monkeypatch, role):
     monkeypatch.setattr(
         "auth_dependencies.get_user_by_id",
         lambda user_id: make_user(role),
@@ -50,9 +47,7 @@ def test_authorized_role_can_read_fhir_practitioner(
     )
 
     assert response.status_code == 200
-    assert response.headers["content-type"] == (
-        "application/fhir+json"
-    )
+    assert response.headers["content-type"] == ("application/fhir+json")
     assert response.json()["resourceType"] == "Practitioner"
     assert response.json()["id"] == "1"
     assert response.json()["name"][0]["family"] == "Smith"
@@ -78,9 +73,7 @@ def test_missing_fhir_practitioner_returns_operation_outcome(
     )
 
     assert response.status_code == 404
-    assert response.headers["content-type"] == (
-        "application/fhir+json"
-    )
+    assert response.headers["content-type"] == ("application/fhir+json")
     assert response.json()["resourceType"] == "OperationOutcome"
     assert response.json()["issue"][0]["code"] == "not-found"
 

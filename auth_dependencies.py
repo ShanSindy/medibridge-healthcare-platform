@@ -1,18 +1,17 @@
+from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from permissions import get_allowed_roles
 from token_service import verify_access_token
 from user_service import get_user_by_id
-from collections.abc import Callable
-from permissions import get_allowed_roles
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(
-        bearer_scheme
-    ),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> dict:
     """Return the active user associated with a valid access token."""
 
@@ -43,6 +42,7 @@ def get_current_user(
         "is_active": user["is_active"],
     }
 
+
 def require_roles(*allowed_roles: str) -> Callable:
     """Require an authenticated user with an allowed role."""
 
@@ -71,6 +71,7 @@ def require_roles(*allowed_roles: str) -> Callable:
         return current_user
 
     return role_checker
+
 
 def require_permission(permission: str) -> Callable:
     """Require an authenticated user with a named permission."""

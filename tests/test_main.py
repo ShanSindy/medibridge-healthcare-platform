@@ -1,19 +1,18 @@
-
 import os
 from datetime import date
+
+import pytest
 from fastapi.testclient import TestClient
+
+from auth_dependencies import get_current_user
+from database import get_connection
+from fhir import create_operation_outcome, patient_to_fhir
 from main import app
 from models import Patient
-from fhir import patient_to_fhir
-from fhir import create_operation_outcome
-from database import get_connection
 from tests.db_safety import is_session_database
-import pytest
-from auth_dependencies import get_current_user
 from user_service import create_user, get_user_by_username
 
 client = TestClient(app)
-
 
 
 @pytest.fixture(autouse=True)
@@ -22,9 +21,7 @@ def authenticated_admin():
 
     with get_connection() as conn:
         if not is_session_database(conn.info.dbname):
-            raise RuntimeError(
-                "Test administrator setup requires the disposable test database."
-            )
+            raise RuntimeError("Test administrator setup requires the disposable test database.")
 
     test_admin = get_user_by_username("test_admin")
 
@@ -37,9 +34,7 @@ def authenticated_admin():
         )
 
     if test_admin["role"] != "admin" or not test_admin["is_active"]:
-        raise RuntimeError(
-            "The test administrator must be active and have the admin role."
-        )
+        raise RuntimeError("The test administrator must be active and have the admin role.")
 
     app.dependency_overrides[get_current_user] = lambda: {
         "id": test_admin["id"],
@@ -56,27 +51,21 @@ def authenticated_admin():
         app.dependency_overrides.update(original_overrides)
 
 
-
-
 def test_health_check():
     response = client.get("/health")
 
     assert response.status_code == 200
 
-    assert response.json() == {
-        "status": "healthy",
-        "service": "MediBridge API"
-    }
+    assert response.json() == {"status": "healthy", "service": "MediBridge API"}
+
 
 def test_home():
     response = client.get("/")
 
     assert response.status_code == 200
 
-    assert response.json() == {
-        "application": "MediBridge",
-        "status": "running"
-    }
+    assert response.json() == {"application": "MediBridge", "status": "running"}
+
 
 def test_get_patients():
     response = client.get("/patients")
@@ -84,12 +73,13 @@ def test_get_patients():
     assert response.status_code == 200
     assert isinstance(response.json(), list)
 
+
 def test_create_patient():
     patient_data = {
         "first_name": "Test",
         "last_name": "Patient",
         "date_of_birth": "2000-01-01",
-        "gender": "other"
+        "gender": "other",
     }
 
     patient_id = None
@@ -109,20 +99,20 @@ def test_create_patient():
         if patient_id is not None:
             client.delete(f"/patients/{patient_id}")
 
+
 def test_get_patient_not_found():
     response = client.get("/patients/999999")
 
     assert response.status_code == 404
-    assert response.json() == {
-        "detail": "Patient not found"
-    }
+    assert response.json() == {"detail": "Patient not found"}
+
 
 def test_update_patient():
     patient_data = {
         "first_name": "Original",
         "last_name": "Patient",
         "date_of_birth": "2000-01-01",
-        "gender": "other"
+        "gender": "other",
     }
 
     create_response = client.post("/patients", json=patient_data)
@@ -135,13 +125,10 @@ def test_update_patient():
             "first_name": "Updated",
             "last_name": "Patient",
             "date_of_birth": "2000-01-01",
-            "gender": "other"
+            "gender": "other",
         }
 
-        response = client.put(
-            f"/patients/{patient_id}",
-            json=updated_data
-        )
+        response = client.put(f"/patients/{patient_id}", json=updated_data)
 
         assert response.status_code == 200
         assert response.json()["first_name"] == "Updated"
@@ -150,12 +137,13 @@ def test_update_patient():
     finally:
         client.delete(f"/patients/{patient_id}")
 
+
 def test_delete_patient():
     patient_data = {
         "first_name": "Delete",
         "last_name": "Test",
         "date_of_birth": "2000-01-01",
-        "gender": "other"
+        "gender": "other",
     }
 
     create_response = client.post("/patients", json=patient_data)
@@ -175,6 +163,7 @@ def test_delete_patient():
     finally:
         client.delete(f"/patients/{patient_id}")
 
+
 def test_database_isolation():
     from database import get_connection
 
@@ -193,7 +182,7 @@ def test_create_patient_empty_first_name():
         "first_name": "",
         "last_name": "Patient",
         "date_of_birth": "2000-01-01",
-        "gender": "other"
+        "gender": "other",
     }
 
     response = client.post("/patients", json=patient_data)
@@ -210,7 +199,7 @@ def test_create_patient_whitespace_first_name():
         "first_name": "   ",
         "last_name": "Patient",
         "date_of_birth": "2000-01-01",
-        "gender": "other"
+        "gender": "other",
     }
 
     response = client.post("/patients", json=patient_data)
@@ -220,13 +209,14 @@ def test_create_patient_whitespace_first_name():
         client.delete(f"/patients/{patient_id}")
 
     assert response.status_code == 422
+
 
 def test_create_patient_future_date_of_birth():
     patient_data = {
         "first_name": "Future",
         "last_name": "Patient",
         "date_of_birth": "2099-01-01",
-        "gender": "other"
+        "gender": "other",
     }
 
     response = client.post("/patients", json=patient_data)
@@ -236,13 +226,14 @@ def test_create_patient_future_date_of_birth():
         client.delete(f"/patients/{patient_id}")
 
     assert response.status_code == 422
+
 
 def test_create_patient_invalid_gender():
     patient_data = {
         "first_name": "Test",
         "last_name": "Patient",
         "date_of_birth": "2000-01-01",
-        "gender": "invalid_value"
+        "gender": "invalid_value",
     }
 
     response = client.post("/patients", json=patient_data)
@@ -253,13 +244,10 @@ def test_create_patient_invalid_gender():
 
     assert response.status_code == 422
 
+
 def test_patient_to_fhir():
     patient = Patient(
-        id=1,
-        first_name="Alex",
-        last_name="Morgan",
-        date_of_birth=date(1992, 4, 15),
-        gender="male"
+        id=1, first_name="Alex", last_name="Morgan", date_of_birth=date(1992, 4, 15), gender="male"
     )
 
     result = patient_to_fhir(patient)
@@ -267,23 +255,18 @@ def test_patient_to_fhir():
     assert result == {
         "resourceType": "Patient",
         "id": "1",
-        "name": [
-            {
-                "use": "official",
-                "family": "Morgan",
-                "given": ["Alex"]
-            }
-        ],
+        "name": [{"use": "official", "family": "Morgan", "given": ["Alex"]}],
         "gender": "male",
-        "birthDate": "1992-04-15"
+        "birthDate": "1992-04-15",
     }
+
 
 def test_get_fhir_patient():
     patient_data = {
         "first_name": "FHIR",
         "last_name": "Test",
         "date_of_birth": "1995-06-15",
-        "gender": "female"
+        "gender": "female",
     }
 
     create_response = client.post("/patients", json=patient_data)
@@ -316,17 +299,10 @@ def test_get_fhir_patient_not_found():
 
     assert response.json() == {
         "resourceType": "OperationOutcome",
-        "issue": [
-            {
-                "severity": "error",
-                "code": "not-found",
-                "diagnostics": "Patient not found"
-            }
-        ]
+        "issue": [{"severity": "error", "code": "not-found", "diagnostics": "Patient not found"}],
     }
 
     assert response.headers["content-type"] == "application/fhir+json"
-
 
 
 def test_get_fhir_patients_bundle():
@@ -334,7 +310,7 @@ def test_get_fhir_patients_bundle():
         "first_name": "Bundle",
         "last_name": "Test",
         "date_of_birth": "1998-03-20",
-        "gender": "female"
+        "gender": "female",
     }
 
     create_response = client.post("/patients", json=patient_data)
@@ -343,13 +319,7 @@ def test_get_fhir_patients_bundle():
     patient_id = create_response.json()["id"]
 
     try:
-        response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": "Test",
-                "given": "Bundle"
-            }
-        )
+        response = client.get("/fhir/Patient", params={"family": "Test", "given": "Bundle"})
 
         assert response.status_code == 200
 
@@ -361,9 +331,7 @@ def test_get_fhir_patients_bundle():
         assert len(result["entry"]) <= 10
 
         matching_entries = [
-            entry
-            for entry in result["entry"]
-            if entry["resource"]["id"] == str(patient_id)
+            entry for entry in result["entry"] if entry["resource"]["id"] == str(patient_id)
         ]
 
         assert len(matching_entries) == 1
@@ -406,10 +374,7 @@ def test_get_fhir_patients_empty_bundle(monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    monkeypatch.setattr(
-        "main.get_connection",
-        lambda: FakeConnection()
-    )
+    monkeypatch.setattr("main.get_connection", lambda: FakeConnection())
 
     response = client.get("/fhir/Patient")
 
@@ -419,15 +384,9 @@ def test_get_fhir_patients_empty_bundle(monkeypatch):
         "resourceType": "Bundle",
         "type": "searchset",
         "total": 0,
-        "link": [
-            {
-                "relation": "self",
-                "url": "/fhir/Patient?_count=10&_offset=0"
-            }
-        ],
-        "entry": []
+        "link": [{"relation": "self", "url": "/fhir/Patient?_count=10&_offset=0"}],
+        "entry": [],
     }
-
 
 
 def test_search_fhir_patients_by_family():
@@ -435,7 +394,7 @@ def test_search_fhir_patients_by_family():
         "first_name": "Search",
         "last_name": "UniqueFHIRFamily123",
         "date_of_birth": "1995-05-20",
-        "gender": "female"
+        "gender": "female",
     }
 
     create_response = client.post("/patients", json=patient_data)
@@ -444,10 +403,7 @@ def test_search_fhir_patients_by_family():
     patient_id = create_response.json()["id"]
 
     try:
-        response = client.get(
-            "/fhir/Patient",
-            params={"family": "uniquefhirfamily123"}
-        )
+        response = client.get("/fhir/Patient", params={"family": "uniquefhirfamily123"})
 
         assert response.status_code == 200
 
@@ -467,17 +423,14 @@ def test_search_fhir_patients_by_family():
     finally:
         client.delete(f"/patients/{patient_id}")
 
+
 def test_search_fhir_patients_no_match():
-    response = client.get(
-        "/fhir/Patient",
-        params={"family": "NonexistentFamily999"}
-    )
+    response = client.get("/fhir/Patient", params={"family": "NonexistentFamily999"})
 
     assert response.status_code == 200
 
     result = response.json()
 
-   
     assert result == {
         "resourceType": "Bundle",
         "type": "searchset",
@@ -485,10 +438,10 @@ def test_search_fhir_patients_no_match():
         "link": [
             {
                 "relation": "self",
-                "url": "/fhir/Patient?family=NonexistentFamily999&_count=10&_offset=0"
+                "url": "/fhir/Patient?family=NonexistentFamily999&_count=10&_offset=0",
             }
         ],
-        "entry": []
+        "entry": [],
     }
 
 
@@ -497,7 +450,7 @@ def test_search_fhir_patients_by_given():
         "first_name": "UniqueFHIRGiven123",
         "last_name": "Johnson",
         "date_of_birth": "1995-05-20",
-        "gender": "female"
+        "gender": "female",
     }
 
     create_response = client.post("/patients", json=patient_data)
@@ -506,10 +459,7 @@ def test_search_fhir_patients_by_given():
     patient_id = create_response.json()["id"]
 
     try:
-        response = client.get(
-            "/fhir/Patient",
-            params={"given": "uniquefhirgiven123"}
-        )
+        response = client.get("/fhir/Patient", params={"given": "uniquefhirgiven123"})
 
         assert response.status_code == 200
 
@@ -529,12 +479,13 @@ def test_search_fhir_patients_by_given():
     finally:
         client.delete(f"/patients/{patient_id}")
 
+
 def test_search_fhir_patients_by_family_and_given():
     patient_data = {
         "first_name": "UniqueCombinedGiven123",
         "last_name": "UniqueCombinedFamily123",
         "date_of_birth": "1994-08-12",
-        "gender": "male"
+        "gender": "male",
     }
 
     create_response = client.post("/patients", json=patient_data)
@@ -545,10 +496,7 @@ def test_search_fhir_patients_by_family_and_given():
     try:
         response = client.get(
             "/fhir/Patient",
-            params={
-                "family": "uniquecombinedfamily123",
-                "given": "uniquecombinedgiven123"
-            }
+            params={"family": "uniquecombinedfamily123", "given": "uniquecombinedgiven123"},
         )
 
         assert response.status_code == 200
@@ -569,6 +517,7 @@ def test_search_fhir_patients_by_family_and_given():
     finally:
         client.delete(f"/patients/{patient_id}")
 
+
 def test_fhir_patient_count_pagination():
     patient_ids = []
 
@@ -580,19 +529,15 @@ def test_fhir_patient_count_pagination():
                     "first_name": f"Pagination{i}",
                     "last_name": "UniquePaginationTest174",
                     "date_of_birth": "1995-05-20",
-                    "gender": "female"
-                }
+                    "gender": "female",
+                },
             )
 
             assert response.status_code == 201
             patient_ids.append(response.json()["id"])
 
         response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": "UniquePaginationTest174",
-                "_count": 2
-            }
+            "/fhir/Patient", params={"family": "UniquePaginationTest174", "_count": 2}
         )
 
         assert response.status_code == 200
@@ -607,6 +552,7 @@ def test_fhir_patient_count_pagination():
         for patient_id in patient_ids:
             client.delete(f"/patients/{patient_id}")
 
+
 def test_fhir_patient_offset_pagination():
     patient_ids = []
     family = "UniqueOffsetTest177"
@@ -619,8 +565,8 @@ def test_fhir_patient_offset_pagination():
                     "first_name": f"OffsetPatient{i}",
                     "last_name": family,
                     "date_of_birth": "1995-05-20",
-                    "gender": "female"
-                }
+                    "gender": "female",
+                },
             )
 
             assert response.status_code == 201
@@ -628,12 +574,7 @@ def test_fhir_patient_offset_pagination():
 
         # First page
         first_response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": family,
-                "_count": 2,
-                "_offset": 0
-            }
+            "/fhir/Patient", params={"family": family, "_count": 2, "_offset": 0}
         )
 
         assert first_response.status_code == 200
@@ -643,12 +584,7 @@ def test_fhir_patient_offset_pagination():
 
         # Second page
         second_response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": family,
-                "_count": 2,
-                "_offset": 2
-            }
+            "/fhir/Patient", params={"family": family, "_count": 2, "_offset": 2}
         )
 
         assert second_response.status_code == 200
@@ -657,26 +593,18 @@ def test_fhir_patient_offset_pagination():
         assert len(second_entries) == 1
 
         # Verify correct records and ordering
-        first_ids = [
-            entry["resource"]["id"]
-            for entry in first_entries
-        ]
+        first_ids = [entry["resource"]["id"] for entry in first_entries]
 
-        second_ids = [
-            entry["resource"]["id"]
-            for entry in second_entries
-        ]
+        second_ids = [entry["resource"]["id"] for entry in second_entries]
 
-        assert first_ids == [
-            str(patient_ids[0]),
-            str(patient_ids[1])
-        ]
+        assert first_ids == [str(patient_ids[0]), str(patient_ids[1])]
 
         assert second_ids == [str(patient_ids[2])]
 
     finally:
         for patient_id in patient_ids:
             client.delete(f"/patients/{patient_id}")
+
 
 def test_fhir_patient_total_across_pages():
     patient_ids = []
@@ -690,8 +618,8 @@ def test_fhir_patient_total_across_pages():
                     "first_name": f"TotalPatient{i}",
                     "last_name": family,
                     "date_of_birth": "1995-05-20",
-                    "gender": "female"
-                }
+                    "gender": "female",
+                },
             )
 
             assert response.status_code == 201
@@ -699,12 +627,7 @@ def test_fhir_patient_total_across_pages():
 
         # Request the first page
         first_response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": family,
-                "_count": 2,
-                "_offset": 0
-            }
+            "/fhir/Patient", params={"family": family, "_count": 2, "_offset": 0}
         )
 
         assert first_response.status_code == 200
@@ -715,12 +638,7 @@ def test_fhir_patient_total_across_pages():
 
         # Request the second page
         second_response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": family,
-                "_count": 2,
-                "_offset": 2
-            }
+            "/fhir/Patient", params={"family": family, "_count": 2, "_offset": 2}
         )
 
         assert second_response.status_code == 200
@@ -732,6 +650,7 @@ def test_fhir_patient_total_across_pages():
     finally:
         for patient_id in patient_ids:
             client.delete(f"/patients/{patient_id}")
+
 
 def test_fhir_patient_pagination_links():
     patient_ids = []
@@ -745,8 +664,8 @@ def test_fhir_patient_pagination_links():
                     "first_name": f"LinkPatient{i}",
                     "last_name": family,
                     "date_of_birth": "1995-05-20",
-                    "gender": "female"
-                }
+                    "gender": "female",
+                },
             )
 
             assert response.status_code == 201
@@ -754,63 +673,40 @@ def test_fhir_patient_pagination_links():
 
         # First page
         first_response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": family,
-                "_count": 2,
-                "_offset": 0
-            }
+            "/fhir/Patient", params={"family": family, "_count": 2, "_offset": 0}
         )
 
         assert first_response.status_code == 200
         first_data = first_response.json()
 
-        first_links = {
-            link["relation"]: link["url"]
-            for link in first_data["link"]
-        }
+        first_links = {link["relation"]: link["url"] for link in first_data["link"]}
 
-        assert first_links["self"] == (
-            f"/fhir/Patient?family={family}&_count=2&_offset=0"
-        )
+        assert first_links["self"] == (f"/fhir/Patient?family={family}&_count=2&_offset=0")
 
-        assert first_links["next"] == (
-            f"/fhir/Patient?family={family}&_count=2&_offset=2"
-        )
+        assert first_links["next"] == (f"/fhir/Patient?family={family}&_count=2&_offset=2")
 
         assert "previous" not in first_links
 
         # Second page
         second_response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": family,
-                "_count": 2,
-                "_offset": 2
-            }
+            "/fhir/Patient", params={"family": family, "_count": 2, "_offset": 2}
         )
 
         assert second_response.status_code == 200
         second_data = second_response.json()
 
-        second_links = {
-            link["relation"]: link["url"]
-            for link in second_data["link"]
-        }
+        second_links = {link["relation"]: link["url"] for link in second_data["link"]}
 
-        assert second_links["self"] == (
-            f"/fhir/Patient?family={family}&_count=2&_offset=2"
-        )
+        assert second_links["self"] == (f"/fhir/Patient?family={family}&_count=2&_offset=2")
 
-        assert second_links["previous"] == (
-            f"/fhir/Patient?family={family}&_count=2&_offset=0"
-        )
+        assert second_links["previous"] == (f"/fhir/Patient?family={family}&_count=2&_offset=0")
 
         assert "next" not in second_links
 
     finally:
         for patient_id in patient_ids:
             client.delete(f"/patients/{patient_id}")
+
 
 def test_fhir_patient_invalid_pagination():
     invalid_cases = [
@@ -819,19 +715,14 @@ def test_fhir_patient_invalid_pagination():
         {"_count": -1},
         {"_count": "abc"},
         {"_offset": -1},
-        {"_offset": "abc"}
+        {"_offset": "abc"},
     ]
 
     for params in invalid_cases:
-        response = client.get(
-            "/fhir/Patient",
-            params=params
-        )
+        response = client.get("/fhir/Patient", params=params)
 
-        assert response.status_code == 422, (
-            f"Expected 422 for {params}, "
-            f"got {response.status_code}"
-        )
+        assert response.status_code == 422, f"Expected 422 for {params}, got {response.status_code}"
+
 
 def test_fhir_patient_bundle_full_url():
     patient_id = None
@@ -844,18 +735,15 @@ def test_fhir_patient_bundle_full_url():
                 "first_name": "FullUrlTest",
                 "last_name": "UniqueFullUrl187",
                 "date_of_birth": "1995-05-20",
-                "gender": "female"
-            }
+                "gender": "female",
+            },
         )
 
         assert response.status_code == 201
         patient_id = response.json()["id"]
 
         # Search for the test patient
-        response = client.get(
-            "/fhir/Patient",
-            params={"family": "UniqueFullUrl187"}
-        )
+        response = client.get("/fhir/Patient", params={"family": "UniqueFullUrl187"})
 
         assert response.status_code == 200
 
@@ -868,9 +756,7 @@ def test_fhir_patient_bundle_full_url():
         # Verify fullUrl
         entry = data["entry"][0]
 
-        expected_url = (
-            f"http://testserver/fhir/Patient/{patient_id}"
-        )
+        expected_url = f"http://testserver/fhir/Patient/{patient_id}"
 
         assert entry["fullUrl"] == expected_url
         assert entry["resource"]["id"] == str(patient_id)
@@ -879,22 +765,15 @@ def test_fhir_patient_bundle_full_url():
         if patient_id is not None:
             client.delete(f"/patients/{patient_id}")
 
+
 def test_create_operation_outcome():
-    outcome = create_operation_outcome(
-        code="not-found",
-        diagnostics="Patient not found"
-    )
+    outcome = create_operation_outcome(code="not-found", diagnostics="Patient not found")
 
     assert outcome == {
         "resourceType": "OperationOutcome",
-        "issue": [
-            {
-                "severity": "error",
-                "code": "not-found",
-                "diagnostics": "Patient not found"
-            }
-        ]
+        "issue": [{"severity": "error", "code": "not-found", "diagnostics": "Patient not found"}],
     }
+
 
 def test_fhir_invalid_pagination_operation_outcome():
     response = client.get("/fhir/Patient?_count=0")
@@ -909,10 +788,11 @@ def test_fhir_invalid_pagination_operation_outcome():
             {
                 "severity": "error",
                 "code": "invalid",
-                "diagnostics": "Invalid FHIR request parameters"
+                "diagnostics": "Invalid FHIR request parameters",
             }
-        ]
+        ],
     }
+
 
 def test_regular_patient_validation_error():
     response = client.get("/patients/abc")
@@ -926,10 +806,8 @@ def test_regular_patient_validation_error():
     assert "detail" in data
     assert isinstance(data["detail"], list)
 
-    assert data["detail"][0]["loc"] == [
-        "path",
-        "patient_id"
-    ]
+    assert data["detail"][0]["loc"] == ["path", "patient_id"]
+
 
 def test_fhir_capability_statement():
     response = client.get("/fhir/metadata")
@@ -939,19 +817,17 @@ def test_fhir_capability_statement():
     data = response.json()
 
     assert data["resourceType"] == "CapabilityStatement"
-    
+
     assert data["name"] == "MediBridgeCapabilityStatement"
 
-    assert data["title"] == (
-        "MediBridge FHIR R4 Capability Statement"
-    )
+    assert data["title"] == ("MediBridge FHIR R4 Capability Statement")
 
     assert data["status"] == "active"
     assert data["publisher"] == "MediBridge Healthcare Platform"
     assert data["description"] == (
         "MediBridge is a healthcare interoperability platform "
         "providing FHIR R4 Patient, Practitioner, and PractitionerRole "
-            "resource access and search."
+        "resource access and search."
     )
     assert data["kind"] == "instance"
     assert data["fhirVersion"] == "4.0.1"
@@ -964,7 +840,6 @@ def test_fhir_capability_statement():
         "http://hl7.org/fhir/StructureDefinition/Patient"
     )
 
-
     rest = data["rest"][0]
 
     assert rest["mode"] == "server"
@@ -973,13 +848,11 @@ def test_fhir_capability_statement():
 
     assert patient_resource["type"] == "Patient"
 
-    interactions = [
-        interaction["code"]
-        for interaction in patient_resource["interaction"]
-    ]
+    interactions = [interaction["code"] for interaction in patient_resource["interaction"]]
 
     assert "read" in interactions
     assert "search-type" in interactions
+
 
 def test_fhir_capability_statement_search_parameters():
     response = client.get("/fhir/metadata")
@@ -994,10 +867,7 @@ def test_fhir_capability_statement_search_parameters():
 
     assert len(search_parameters) == 3
 
-    parameters = {
-        parameter["name"]: parameter
-        for parameter in search_parameters
-    }
+    parameters = {parameter["name"]: parameter for parameter in search_parameters}
 
     assert "family" in parameters
     assert "given" in parameters
@@ -1005,13 +875,10 @@ def test_fhir_capability_statement_search_parameters():
     assert parameters["family"]["type"] == "string"
     assert parameters["given"]["type"] == "string"
 
-    assert parameters["family"]["documentation"] == (
-        "Search patients by family name."
-    )
+    assert parameters["family"]["documentation"] == ("Search patients by family name.")
 
-    assert parameters["given"]["documentation"] == (
-        "Search patients by given name."
-    )
+    assert parameters["given"]["documentation"] == ("Search patients by given name.")
+
 
 def test_fhir_patient_family_prefix_search():
     # Create a patient with a known family name.
@@ -1021,8 +888,8 @@ def test_fhir_patient_family_prefix_search():
             "first_name": "Michael",
             "last_name": "Johnson",
             "date_of_birth": "1995-05-15",
-            "gender": "male"
-        }
+            "gender": "male",
+        },
     )
 
     assert create_response.status_code in (200, 201)
@@ -1030,13 +897,7 @@ def test_fhir_patient_family_prefix_search():
     patient_id = create_response.json()["id"]
 
     # Search using only the beginning of the family name.
-    response = client.get(
-    "/fhir/Patient",
-    params={
-        "family": "jOhN",
-        "_count": 100
-    }
-)
+    response = client.get("/fhir/Patient", params={"family": "jOhN", "_count": 100})
     assert response.status_code == 200
 
     data = response.json()
@@ -1044,12 +905,10 @@ def test_fhir_patient_family_prefix_search():
     assert data["resourceType"] == "Bundle"
     assert data["type"] == "searchset"
 
-    matching_ids = [
-        entry["resource"]["id"]
-        for entry in data["entry"]
-    ]
+    matching_ids = [entry["resource"]["id"] for entry in data["entry"]]
 
     assert str(patient_id) in [str(value) for value in matching_ids]
+
 
 def test_fhir_patient_given_prefix_search():
     # Create a patient with a known given name.
@@ -1059,8 +918,8 @@ def test_fhir_patient_given_prefix_search():
             "first_name": "Alexander",
             "last_name": "Williams",
             "date_of_birth": "1996-08-20",
-            "gender": "male"
-        }
+            "gender": "male",
+        },
     )
 
     assert create_response.status_code in (200, 201)
@@ -1068,13 +927,7 @@ def test_fhir_patient_given_prefix_search():
     patient_id = create_response.json()["id"]
 
     # Search using a partial, mixed-case given name.
-    response = client.get(
-    "/fhir/Patient",
-    params={
-        "given": "aleX",
-        "_count": 100
-    }
-)
+    response = client.get("/fhir/Patient", params={"given": "aleX", "_count": 100})
 
     assert response.status_code == 200
 
@@ -1083,14 +936,10 @@ def test_fhir_patient_given_prefix_search():
     assert data["resourceType"] == "Bundle"
     assert data["type"] == "searchset"
 
-    matching_ids = [
-        entry["resource"]["id"]
-        for entry in data["entry"]
-    ]
+    matching_ids = [entry["resource"]["id"] for entry in data["entry"]]
 
-    assert str(patient_id) in [
-        str(value) for value in matching_ids
-    ]
+    assert str(patient_id) in [str(value) for value in matching_ids]
+
 
 def test_fhir_patient_search_escapes_wildcards():
     # Create a patient with a normal family name.
@@ -1100,8 +949,8 @@ def test_fhir_patient_search_escapes_wildcards():
             "first_name": "Daniel",
             "last_name": "Smith",
             "date_of_birth": "1994-06-12",
-            "gender": "male"
-        }
+            "gender": "male",
+        },
     )
 
     assert create_response.status_code in (200, 201)
@@ -1109,32 +958,20 @@ def test_fhir_patient_search_escapes_wildcards():
     patient_id = create_response.json()["id"]
 
     # Percent sign must not behave as a wildcard.
-    percent_response = client.get(
-        "/fhir/Patient",
-        params={"family": "Sm%"}
-    )
+    percent_response = client.get("/fhir/Patient", params={"family": "Sm%"})
 
     assert percent_response.status_code == 200
 
-    percent_ids = [
-        str(entry["resource"]["id"])
-        for entry in percent_response.json()["entry"]
-    ]
+    percent_ids = [str(entry["resource"]["id"]) for entry in percent_response.json()["entry"]]
 
     assert str(patient_id) not in percent_ids
 
     # Underscore must not behave as a wildcard.
-    underscore_response = client.get(
-        "/fhir/Patient",
-        params={"family": "Sm_th"}
-    )
+    underscore_response = client.get("/fhir/Patient", params={"family": "Sm_th"})
 
     assert underscore_response.status_code == 200
 
-    underscore_ids = [
-        str(entry["resource"]["id"])
-        for entry in underscore_response.json()["entry"]
-    ]
+    underscore_ids = [str(entry["resource"]["id"]) for entry in underscore_response.json()["entry"]]
 
     assert str(patient_id) not in underscore_ids
 
@@ -1154,7 +991,7 @@ def test_fhir_patient_includes_identifier():
                     VALUES (%s, %s, %s, %s)
                     RETURNING id
                     """,
-                    ("Identifier", "Test", "1995-06-15", "female")
+                    ("Identifier", "Test", "1995-06-15", "female"),
                 )
                 patient_id = cursor.fetchone()[0]
 
@@ -1164,11 +1001,7 @@ def test_fhir_patient_includes_identifier():
                         (patient_id, system, value)
                     VALUES (%s, %s, %s)
                     """,
-                    (
-                        patient_id,
-                        "https://medibridge.example.org/mrn",
-                        f"TEST-MRN-{patient_id}"
-                    )
+                    (patient_id, "https://medibridge.example.org/mrn", f"TEST-MRN-{patient_id}"),
                 )
 
         response = client.get(f"/fhir/Patient/{patient_id}")
@@ -1180,22 +1013,16 @@ def test_fhir_patient_includes_identifier():
         assert data["resourceType"] == "Patient"
         assert data["id"] == str(patient_id)
         assert data["identifier"] == [
-            {
-                "system": "https://medibridge.example.org/mrn",
-                "value": f"TEST-MRN-{patient_id}"
-            }
+            {"system": "https://medibridge.example.org/mrn", "value": f"TEST-MRN-{patient_id}"}
         ]
 
     finally:
         if patient_id is not None:
             with get_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute(
-                        "DELETE FROM patients WHERE id = %s",
-                        (patient_id,)
-                    )
+                    cursor.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
 
-                    
+
 def test_fhir_patient_search_includes_identifier():
     from database import get_connection
 
@@ -1211,7 +1038,7 @@ def test_fhir_patient_search_includes_identifier():
                     VALUES (%s, %s, %s, %s)
                     RETURNING id
                     """,
-                    ("BundleMRN", "SearchTest", "1995-06-15", "female")
+                    ("BundleMRN", "SearchTest", "1995-06-15", "female"),
                 )
 
                 patient_id = cursor.fetchone()[0]
@@ -1225,16 +1052,12 @@ def test_fhir_patient_search_includes_identifier():
                     (
                         patient_id,
                         "https://medibridge.example.org/mrn",
-                        f"TEST-BUNDLE-MRN-{patient_id}"
-                    )
+                        f"TEST-BUNDLE-MRN-{patient_id}",
+                    ),
                 )
 
         response = client.get(
-            "/fhir/Patient",
-            params={
-                "family": "SearchTest",
-                "given": "BundleMRN"
-            }
+            "/fhir/Patient", params={"family": "SearchTest", "given": "BundleMRN"}
         )
 
         assert response.status_code == 200
@@ -1252,7 +1075,7 @@ def test_fhir_patient_search_includes_identifier():
         assert resource["identifier"] == [
             {
                 "system": "https://medibridge.example.org/mrn",
-                "value": f"TEST-BUNDLE-MRN-{patient_id}"
+                "value": f"TEST-BUNDLE-MRN-{patient_id}",
             }
         ]
 
@@ -1260,23 +1083,18 @@ def test_fhir_patient_search_includes_identifier():
         if patient_id is not None:
             with get_connection() as conn:
                 with conn.cursor() as cursor:
-                    cursor.execute(
-                        "DELETE FROM patients WHERE id = %s",
-                        (patient_id,)
-                    )
+                    cursor.execute("DELETE FROM patients WHERE id = %s", (patient_id,))
+
 
 def test_fhir_patient_search_by_identifier():
     patient_data = {
         "first_name": "IdentifierSearch",
         "last_name": "TestPatient",
         "date_of_birth": "1996-08-12",
-        "gender": "female"
+        "gender": "female",
     }
 
-    create_response = client.post(
-        "/patients",
-        json=patient_data
-    )
+    create_response = client.post("/patients", json=patient_data)
     assert create_response.status_code == 201
 
     patient_id = create_response.json()["id"]
@@ -1293,15 +1111,12 @@ def test_fhir_patient_search_by_identifier():
                         (patient_id, system, value)
                     VALUES (%s, %s, %s)
                     """,
-                    (patient_id, system, mrn)
+                    (patient_id, system, mrn),
                 )
             conn.commit()
 
         # Search using the MRN value alone.
-        response = client.get(
-            "/fhir/Patient",
-            params={"identifier": mrn}
-        )
+        response = client.get("/fhir/Patient", params={"identifier": mrn})
 
         assert response.status_code == 200
 
@@ -1314,17 +1129,10 @@ def test_fhir_patient_search_by_identifier():
         patient = result["entry"][0]["resource"]
 
         assert patient["id"] == str(patient_id)
-        assert patient["identifier"] == [
-            {"system": system, "value": mrn}
-        ]
+        assert patient["identifier"] == [{"system": system, "value": mrn}]
 
         # Search using the identifier system and value.
-        response = client.get(
-            "/fhir/Patient",
-            params={
-                "identifier": f"{system}|{mrn}"
-            }
-        )
+        response = client.get("/fhir/Patient", params={"identifier": f"{system}|{mrn}"})
 
         assert response.status_code == 200
 
@@ -1338,14 +1146,10 @@ def test_fhir_patient_search_by_identifier():
         # through the ON DELETE CASCADE foreign key.
         client.delete(f"/patients/{patient_id}")
 
+
 def test_fhir_patient_search_identifier_no_match():
     # Search for an MRN that does not exist.
-    response = client.get(
-        "/fhir/Patient",
-        params={
-            "identifier": "NONEXISTENT-MRN-999999"
-        }
-    )
+    response = client.get("/fhir/Patient", params={"identifier": "NONEXISTENT-MRN-999999"})
 
     assert response.status_code == 200
 
@@ -1359,12 +1163,7 @@ def test_fhir_patient_search_identifier_no_match():
     # Search with an incorrect identifier system.
     response = client.get(
         "/fhir/Patient",
-        params={
-            "identifier": (
-                "https://wrong.example.org/mrn"
-                "|NONEXISTENT-MRN-999999"
-            )
-        }
+        params={"identifier": ("https://wrong.example.org/mrn|NONEXISTENT-MRN-999999")},
     )
 
     assert response.status_code == 200
@@ -1374,18 +1173,16 @@ def test_fhir_patient_search_identifier_no_match():
     assert result["total"] == 0
     assert result["entry"] == []
 
+
 def test_fhir_patient_search_wrong_identifier_system():
     patient_data = {
         "first_name": "SystemCheck",
         "last_name": "TestPatient",
         "date_of_birth": "1994-05-18",
-        "gender": "male"
+        "gender": "male",
     }
 
-    create_response = client.post(
-        "/patients",
-        json=patient_data
-    )
+    create_response = client.post("/patients", json=patient_data)
     assert create_response.status_code == 201
 
     patient_id = create_response.json()["id"]
@@ -1403,32 +1200,21 @@ def test_fhir_patient_search_wrong_identifier_system():
                         (patient_id, system, value)
                     VALUES (%s, %s, %s)
                     """,
-                    (patient_id, correct_system, mrn)
+                    (patient_id, correct_system, mrn),
                 )
             conn.commit()
 
         # The correct identifier system must find the patient.
         correct_response = client.get(
-            "/fhir/Patient",
-            params={
-                "identifier": f"{correct_system}|{mrn}"
-            }
+            "/fhir/Patient", params={"identifier": f"{correct_system}|{mrn}"}
         )
 
         assert correct_response.status_code == 200
         assert correct_response.json()["total"] == 1
-        assert (
-            correct_response.json()["entry"][0]["resource"]["id"]
-            == str(patient_id)
-        )
+        assert correct_response.json()["entry"][0]["resource"]["id"] == str(patient_id)
 
         # The wrong system must NOT find the same patient.
-        wrong_response = client.get(
-            "/fhir/Patient",
-            params={
-                "identifier": f"{wrong_system}|{mrn}"
-            }
-        )
+        wrong_response = client.get("/fhir/Patient", params={"identifier": f"{wrong_system}|{mrn}"})
 
         assert wrong_response.status_code == 200
 
@@ -1442,18 +1228,16 @@ def test_fhir_patient_search_wrong_identifier_system():
     finally:
         client.delete(f"/patients/{patient_id}")
 
+
 def test_fhir_patient_search_combined_name_and_identifier():
     patient_data = {
         "first_name": "CombinedSearch",
         "last_name": "IdentifierTest",
         "date_of_birth": "1993-07-21",
-        "gender": "female"
+        "gender": "female",
     }
 
-    create_response = client.post(
-        "/patients",
-        json=patient_data
-    )
+    create_response = client.post("/patients", json=patient_data)
     assert create_response.status_code == 201
 
     patient_id = create_response.json()["id"]
@@ -1470,7 +1254,7 @@ def test_fhir_patient_search_combined_name_and_identifier():
                         (patient_id, system, value)
                     VALUES (%s, %s, %s)
                     """,
-                    (patient_id, system, mrn)
+                    (patient_id, system, mrn),
                 )
             conn.commit()
 
@@ -1480,8 +1264,8 @@ def test_fhir_patient_search_combined_name_and_identifier():
             params={
                 "family": "IdentifierTest",
                 "given": "CombinedSearch",
-                "identifier": f"{system}|{mrn}"
-            }
+                "identifier": f"{system}|{mrn}",
+            },
         )
 
         assert response.status_code == 200
@@ -1504,8 +1288,8 @@ def test_fhir_patient_search_combined_name_and_identifier():
             params={
                 "family": "WrongFamily",
                 "given": "CombinedSearch",
-                "identifier": f"{system}|{mrn}"
-            }
+                "identifier": f"{system}|{mrn}",
+            },
         )
 
         assert wrong_response.status_code == 200
@@ -1514,6 +1298,7 @@ def test_fhir_patient_search_combined_name_and_identifier():
 
     finally:
         client.delete(f"/patients/{patient_id}")
+
 
 def test_fhir_metadata_advertises_identifier_search():
     response = client.get("/fhir/metadata")
@@ -1532,10 +1317,7 @@ def test_fhir_metadata_advertises_identifier_search():
         if resource["type"] == "Patient"
     )
 
-    search_parameters = {
-        param["name"]: param
-        for param in patient_resource["searchParam"]
-    }
+    search_parameters = {param["name"]: param for param in patient_resource["searchParam"]}
 
     assert "family" in search_parameters
     assert "given" in search_parameters

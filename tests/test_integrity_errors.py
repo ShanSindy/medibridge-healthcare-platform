@@ -7,15 +7,16 @@ behaviour comes from PostgreSQL constraints. Every row created here is synthetic
 is removed again in the fixture teardown.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from psycopg import sql
 
 from auth_dependencies import get_current_user
 from database import get_connection
-from tests.db_safety import is_session_database
 from main import app
+from tests.db_safety import is_session_database
 
 # raise_server_exceptions=False so an unhandled error shows up as a 500
 # response instead of aborting the test.
@@ -86,7 +87,7 @@ def records():
         return provider_id
 
     def add_appointment(patient_id: int, provider_id: int) -> int:
-        starts_at = datetime(2031, 1, 6, 9, 0, tzinfo=timezone.utc)
+        starts_at = datetime(2031, 1, 6, 9, 0, tzinfo=UTC)
         with get_connection() as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -131,7 +132,10 @@ def _count(table: str, column: str, value: int) -> int:
     assert table in {"appointments", "patients", "providers"}
     assert column in {"id", "patient_id", "provider_id"}
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(f"SELECT count(*) FROM {table} WHERE {column} = %s", (value,))
+        query = sql.SQL("SELECT count(*) FROM {} WHERE {} = %s").format(
+            sql.Identifier(table), sql.Identifier(column)
+        )
+        cur.execute(query, (value,))
         return cur.fetchone()[0]
 
 
@@ -182,9 +186,7 @@ def test_delete_patient_with_appointments_returns_409_and_keeps_patient(records)
     response = client.delete(f"/patients/{patient_id}")
 
     assert response.status_code == 409
-    assert response.json() == {
-        "detail": "Patient has appointments and cannot be deleted."
-    }
+    assert response.json() == {"detail": "Patient has appointments and cannot be deleted."}
     assert _count("patients", "id", patient_id) == 1
     assert _count("appointments", "patient_id", patient_id) == 1
 
@@ -206,9 +208,7 @@ def test_delete_provider_with_appointments_returns_409_and_keeps_provider(record
     response = client.delete(f"/providers/{provider_id}")
 
     assert response.status_code == 409
-    assert response.json() == {
-        "detail": "Provider has appointments and cannot be deleted."
-    }
+    assert response.json() == {"detail": "Provider has appointments and cannot be deleted."}
     assert _count("providers", "id", provider_id) == 1
 
 
@@ -248,7 +248,9 @@ def test_update_provider_to_duplicate_email_returns_409(records):
     records["provider"]("integrity.taken@example.com")
     provider_id = records["provider"]("integrity.other@example.com")
 
-    response = client.put(f"/providers/{provider_id}", json=_provider_body("integrity.taken@example.com"))
+    response = client.put(
+        f"/providers/{provider_id}", json=_provider_body("integrity.taken@example.com")
+    )
 
     assert response.status_code == 409
     assert response.json() == {"detail": "A provider with this email already exists."}
@@ -257,7 +259,9 @@ def test_update_provider_to_duplicate_email_returns_409(records):
 def test_update_provider_keeping_its_own_email_still_succeeds(records):
     provider_id = records["provider"]("integrity.same@example.com")
 
-    response = client.put(f"/providers/{provider_id}", json=_provider_body("integrity.same@example.com"))
+    response = client.put(
+        f"/providers/{provider_id}", json=_provider_body("integrity.same@example.com")
+    )
 
     assert response.status_code == 200
     assert response.json()["email"] == "integrity.same@example.com"

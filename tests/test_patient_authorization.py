@@ -1,10 +1,8 @@
-
 import pytest
 from fastapi.testclient import TestClient
 
 import main
 from auth_dependencies import get_current_user
-
 
 client = TestClient(main.app)
 
@@ -63,6 +61,7 @@ def test_scheduler_cannot_modify_patients(method, path, permission):
 
     assert response.status_code == 403
 
+
 def test_scheduler_can_read_patients(monkeypatch):
     main.app.dependency_overrides[get_current_user] = lambda: {
         "id": 2,
@@ -83,9 +82,7 @@ def test_scheduler_can_read_patients(monkeypatch):
             pass
 
         def fetchall(self):
-            return [
-                (1, "Emily", "Carter", "1990-05-12", "female")
-            ]
+            return [(1, "Emily", "Carter", "1990-05-12", "female")]
 
     class FakeConnection:
         def __enter__(self):
@@ -108,6 +105,7 @@ def test_scheduler_can_read_patients(monkeypatch):
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["first_name"] == "Emily"
+
 
 @pytest.mark.parametrize("role", ["admin", "clinician"])
 def test_authorized_roles_can_create_patients(monkeypatch, role):

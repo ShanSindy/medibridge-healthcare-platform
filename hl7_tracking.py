@@ -1,4 +1,3 @@
-
 from database import get_connection
 
 
@@ -35,6 +34,7 @@ def get_processed_hl7_message(metadata: dict) -> dict | None:
         "message_type": row[1],
         "status": row[2],
     }
+
 
 def record_hl7_message(cur, metadata: dict) -> bool:
     """

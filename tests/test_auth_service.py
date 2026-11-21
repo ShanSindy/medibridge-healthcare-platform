@@ -1,4 +1,3 @@
-
 from unittest.mock import patch
 
 from auth_service import authenticate_user

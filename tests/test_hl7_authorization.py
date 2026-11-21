@@ -1,10 +1,8 @@
-
 import pytest
 from fastapi.testclient import TestClient
 
 import main
 from auth_dependencies import get_current_user
-
 
 client = TestClient(main.app)
 
@@ -68,6 +66,4 @@ def test_authorized_roles_reach_hl7_validation(role):
     # 415 confirms authorization succeeded and the request
     # reached the existing Content-Type validation.
     assert response.status_code == 415
-    assert response.json()["detail"] == (
-        "Content-Type must be text/plain."
-    )
+    assert response.json()["detail"] == ("Content-Type must be text/plain.")

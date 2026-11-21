@@ -1,12 +1,10 @@
+from datetime import UTC, datetime
 
 import pytest
-from datetime import datetime, timezone
-
 from fastapi.testclient import TestClient
 
 from main import app
 from token_service import create_access_token
-
 
 client = TestClient(app)
 
@@ -36,7 +34,7 @@ def test_authenticated_roles_can_read_providers(
 
     monkeypatch.setattr(
         "main.get_all_providers",
-        lambda: [],
+        list,
     )
 
     token = create_access_token(1)
@@ -76,9 +74,7 @@ def test_non_admin_roles_cannot_create_providers(
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == (
-        "Insufficient permissions"
-    )
+    assert response.json()["detail"] == ("Insufficient permissions")
 
 
 def test_provider_list_requires_authentication():
@@ -99,9 +95,7 @@ def test_provider_creation_requires_authentication():
 def test_invalid_token_rejected():
     response = client.get(
         "/providers",
-        headers={
-            "Authorization": "Bearer invalid-token"
-        },
+        headers={"Authorization": "Bearer invalid-token"},
     )
 
     assert response.status_code == 401
@@ -132,7 +126,7 @@ def test_admin_can_manage_providers(
         lambda provider: {
             "id": 1,
             **provider.model_dump(),
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         },
     )
 
@@ -142,7 +136,7 @@ def test_admin_can_manage_providers(
         lambda provider_id, provider: {
             "id": provider_id,
             **provider.model_dump(),
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         },
     )
 
@@ -163,14 +157,8 @@ def test_admin_can_manage_providers(
     response = client.request(
         method,
         path,
-        headers={
-            "Authorization": f"Bearer {token}"
-        },
-        json=(
-            provider_data
-            if method != "DELETE"
-            else None
-        ),
+        headers={"Authorization": f"Bearer {token}"},
+        json=(provider_data if method != "DELETE" else None),
     )
 
     expected_status = {
@@ -209,14 +197,10 @@ def test_non_admin_cannot_modify_providers(
     response = client.request(
         method,
         path,
-        headers={
-            "Authorization": f"Bearer {token}"
-        },
+        headers={"Authorization": f"Bearer {token}"},
         json={} if method == "PUT" else None,
     )
 
     assert response.status_code == 403
 
-    assert response.json()["detail"] == (
-        "Insufficient permissions"
-    )
+    assert response.json()["detail"] == ("Insufficient permissions")
