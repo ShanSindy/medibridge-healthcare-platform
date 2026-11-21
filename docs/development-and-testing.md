@@ -1,7 +1,8 @@
 # Development and testing
 
 How to run MediBridge's backend tests, coverage, linting and dependency audits locally,
-and what CI enforces. All data used by the tests is synthetic.
+and what CI enforces. All data used by the tests is synthetic. To run the application
+itself, see [getting-started.md](getting-started.md).
 
 ## One-time setup
 
@@ -35,6 +36,29 @@ python -m pytest
 Supported from the repository root and from `tests/`. Every run creates its own disposable
 database (`medibridge_test_<random>`), empties it before and after each test, and drops it at
 the end. Existing databases are never used. Tests are collected only from `tests/`.
+
+## API contract and architecture tests
+
+Two test modules protect the structure of the API:
+
+- `tests/test_api_contract.py` holds an explicit table of all 29 operations (method, path,
+  handler name, operation ID, access rule, response model, status code, tags) and checks
+  the application against it: the registered routes and the four FastAPI documentation
+  routes, the OpenAPI document, routing through real requests, `401` for every protected
+  operation without a token, and the allowed or denied outcome for each of the four
+  roles. Changing a route, its access rule or its documented responses therefore
+  requires a deliberate change to this table.
+- `tests/test_router_architecture.py` checks that no module in `routers/` imports `main`
+  or another router (absolute and relative imports), that each router is a plain
+  `APIRouter` without its own prefix, tags or dependencies, that every router is
+  registered, that no operation is registered twice, and that the application lifespan
+  does no work.
+
+**FastAPI compatibility.** These tests list routes with `fastapi.routing.iter_route_contexts`,
+because FastAPI includes routers lazily, and read some route attributes such as
+`route.dependant`. These are framework details that a FastAPI upgrade can change; if the
+tests fail after an upgrade, check them before suspecting the application. The
+behavioural checks (real requests, the role matrix, OpenAPI) do not depend on them.
 
 ## Coverage
 
@@ -147,4 +171,19 @@ code. Do not use those options.
 `.github/workflows/ci.yml` runs three jobs on pull requests to `main`, pushes to `main` and manual dispatch:
 backend (Ruff, tests with coverage against PostgreSQL 18 as the non-superuser
 `medibridge_tester`), frontend (lint, type-check, tests, build) and dependency audits. Branch
-protection (making these checks required) is configured separately in repository settings.
+protection (making these checks required) is configured separately in repository settings;
+it is currently not configured, so the checks are not enforced before merging.
+
+## Latest reviewed measurements
+
+Measured locally on Windows at revision `b995c38` on 2026-11-21. This is a snapshot, not
+updated automatically; rerun the commands above for current figures.
+
+| Check | Result |
+|---|---|
+| Backend tests | 731 passed, 2 skipped (intentional) |
+| Combined coverage | 90.97% (enforced minimum 85%) |
+| Frontend tests | 176 passed |
+
+GitHub Actions reports a pass or fail result for each CI job; the figures above are local
+measurements, not taken from CI logs.
