@@ -16,6 +16,7 @@ new non-superuser role.
 | 4. `.env`: copy, placeholder rejected, key generated | Executed in Windows PowerShell; key command also in Git Bash |
 | 5. Migrations, including `btree_gist`, as the non-superuser owner; re-run skips | Executed against real PostgreSQL |
 | 6. First-user procedure | Both Python blocks executed verbatim in Python's interactive console, with the prompts answered by a script rather than typed by a person |
+| 7. `seed_demo_data.py` | Tests run the command against real PostgreSQL (authorization marker, refusals, seeding, repeat and concurrent runs, lock timeout, rollback). API-mode pages checked in headless Edge against a seeded disposable database (2026-11-22). The marker was set only on disposable databases, as a local superuser; setting it as a non-superuser database owner is exercised by CI |
 | 8. Backend, `/health`, `/docs`, `/redoc`, `/openapi.json`, sign-in | Executed against real PostgreSQL |
 | 9. Frontend `npm ci`, demo mode, API mode through the `/api` proxy, sign-in | Executed (Git Bash and headless Chrome on Windows) |
 | POSIX commands | Run in Git Bash on Windows only; not executed on Linux or macOS |
@@ -193,38 +194,115 @@ viewing patients) is created with this same procedure.
 
 ## 7. Synthetic demonstration data (optional)
 
-`seed_demo_data.py` loads a fixed synthetic dataset into an **empty** database: 16 fictional
-patients with MRNs `DEMO-000001` to `DEMO-000016`, 6 providers in 6 specialties
-(`example.org` addresses) and 20 appointments (11 scheduled, 6 completed, 3 cancelled).
-It creates no users, passwords or audit events.
+`seed_demo_data.py` loads a fixed synthetic dataset:
+- 16 fictional patients with MRNs `DEMO-000001` to `DEMO-000016`;
+- 6 providers in 6 specialties, with `example.org` addresses;
+- 20 appointments: 11 scheduled, 6 completed and 3 cancelled.
 
-Check the target first; a dry run writes nothing:
+It creates no users, passwords or audit events. Create users separately with
+`provision_user.py` (step 6).
+
+**Use a database created only for synthetic demonstrations.** Do not use your normal
+development database, and never a database that holds real data. The command refuses
+every database that you have not explicitly authorized.
+
+### Prepare and authorize the target
+
+1. Create a new database for demonstrations (step 3) and set `DB_NAME` to it. Apply the
+   migrations to it (step 5).
+2. As the database owner, connected to that database, look up its authorization value:
+
+   ```sql
+   SELECT 'medibridge-synthetic-demo-target:' || datname || ':' || oid
+   FROM pg_database WHERE datname = current_database();
+   ```
+
+3. Authorize the database by setting that exact value as the comment on its `public`
+   schema:
+
+   ```sql
+   COMMENT ON SCHEMA public IS 'medibridge-synthetic-demo-target:medibridge_demo:123456';
+   ```
+
+   Replace the example value with the one returned in step 2. The command prints the exact
+   statement when a database is not authorized. It never sets the comment itself.
+
+The value is bound to the database's name and OID. A renamed database, a copy made from it
+as a template, or a dump restored into another database therefore fails the check until
+its owner authorizes it again.
+
+The marker protects against accidentally targeting the wrong database. It is not an access
+control: any owner or superuser of a database can set it.
+
+### Check, then seed
 
 ```bash
-python seed_demo_data.py --database medibridge_dev --dry-run
-python seed_demo_data.py --database medibridge_dev --confirm-synthetic-demo
+python seed_demo_data.py --database medibridge_demo --dry-run
+python seed_demo_data.py --database medibridge_demo --confirm-synthetic-demo
 ```
 
-- `--database` must equal `DB_NAME`. The names `medibridge`, `medibridge_test`,
-  `medibridge_ci_test`, `postgres`, `template0` and `template1` are always refused. A name is
-  not proof that a database is safe: only point the command at a database you created for
-  demonstrations.
-- The patient, identifier, provider and appointment tables must all be empty; users may
-  already exist. A second run is **refused** (exit code 4) and changes nothing; the command
-  is not idempotent and never updates, deletes or resets data. To start again, use a new
-  empty database.
-- Everything is inserted in one transaction, after locking the four tables, so a failure
-  or a second concurrent run leaves nothing behind.
-- Appointment dates are relative to midnight UTC today, or to `--anchor` (for example
-  `--anchor 2031-01-06T00:00:00+00:00`) for a reproducible dataset.
+The command opens one connection with a 10 s connect timeout, a 10 s lock timeout and a
+60 s statement timeout (for this session only). On that connection, inside the seeding
+transaction and before anything is locked or written, it checks all of the following:
 
-Exit codes: 0 seeded (or dry run found empty tables), 1 unexpected error, 2 invalid
-arguments, 3 target refused, 4 tables not empty, 5 database unavailable or not migrated.
+- `--database` equals `DB_NAME` and the actual `current_database()`. The names
+  `medibridge`, `medibridge_test`, `medibridge_ci_test`, `postgres`, `template0` and
+  `template1` are always refused, even if authorized.
+- The connected role equals `DB_USER`, and the port is the configured one.
+- The transaction runs at READ COMMITTED.
+- The authorization marker matches.
 
-With the backend running and a user created (step 6), the patients and providers appear on
-the Dashboard, Patients and Providers pages in API mode (step 9) and through the API.
-The Appointments, FHIR Explorer, HL7 Integration and Audit Logs pages still show demo data
-or placeholders; the appointments are available through `GET /appointments`.
+It then locks the patient, identifier, provider, appointment, HL7 message and audit-log
+tables (`SHARE ROW EXCLUSIVE`). It requires all six tables to be empty and inserts
+everything in one transaction.
+
+| Existing data | Allowed? |
+|---|---|
+| Users (for example created with `provision_user.py`) | Yes, unchanged |
+| `schema_migrations` (from `migrate.py`) | Yes |
+| Patients, identifiers, providers or appointments | No: exit code 4 |
+| HL7 messages or audit events (they would describe records that are not in the dataset) | No: exit code 4 |
+
+Other behaviour:
+
+- **Dry run.** `--dry-run` runs the same target checks in a read-only transaction and
+  reports whether the tables are empty. It is advisory only: another session can write
+  before you seed, so the tables are checked again, under lock, when seeding.
+- **Repeat runs.** A second run is refused (exit code 4) and changes nothing. The command
+  never updates, deletes or resets data; to start again, use a new authorized database.
+- **Concurrent runs.** A second command started at the same time waits for the first
+  one's locks. It then sees the committed rows and is refused.
+- **Anchor date.** Appointment dates are relative to midnight UTC today, or to `--anchor`
+  for a reproducible dataset. The anchor must be an ISO 8601 date and time with a UTC
+  offset, for example `2031-01-06T00:00:00+00:00`.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Seeded and committed (or dry run: authorized and tables empty) |
+| 1 | Unexpected error (only the PostgreSQL error code or error type is shown); not committed |
+| 2 | Invalid arguments, including a malformed or offset-less `--anchor` |
+| 3 | Missing settings, name mismatch, protected database, wrong connected database or role, not READ COMMITTED, or not authorized; not committed |
+| 4 | Required tables are not empty; not committed |
+| 5 | Database unreachable, tables busy beyond the lock timeout, or not migrated; not committed |
+| 6 | **Outcome unknown**: the connection failed during the commit |
+
+"Not committed" is certain in every case except exit code 6. With exit code 6 the dataset
+may or may not have been written. Do not run the command again straight away; first check,
+for example with `SELECT count(*) FROM patients`. Sixteen patients means the seed was
+committed. Zero means nothing was written, and you can run it again.
+
+### What the frontend shows
+
+With the backend running, a user created (step 6) and the frontend in API mode (step 9):
+
+- The **Dashboard**, **Patients** and **Providers** pages show the seeded patients and
+  providers.
+- The **Appointments**, **FHIR Explorer**, **HL7 Integration** and **Audit Logs** pages
+  still show built-in demo data or placeholders, not the seeded records. The seeded
+  appointments are available through `GET /appointments`.
+
+This was checked on 2026-11-22 in headless Edge against a seeded disposable database
+(16 patients and 6 providers in the UI; 20 appointments, 11 scheduled, through the API).
 
 You can also create records through the API (see [api.md](api.md)) or by sending synthetic
 HL7 `ADT^A04` messages (see [interoperability.md](interoperability.md)). Use obviously
