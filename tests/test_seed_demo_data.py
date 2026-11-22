@@ -374,6 +374,109 @@ def test_isolation_other_than_read_committed_is_refused(
     assert counts(db) == dict.fromkeys(COUNTS, 0)
 
 
+class FakeIdentityConnection:
+    """Returns a fixed identity row; enough for verify_target without a database."""
+
+    def __init__(self, row, port=5432):
+        self.row = row
+        self.info = type("Info", (), {"port": port})()
+
+    def execute(self, query):
+        row = self.row
+        return type("Result", (), {"fetchone": staticmethod(lambda: row)})()
+
+
+DEMO_TARGET = seed_demo_data.Target(
+    "db.example.internal", "5432", "medibridge_demo", "operator", "x"
+)
+DEMO_MARKER = seed_demo_data.authorization_marker("medibridge_demo", 4242)
+
+
+@pytest.mark.parametrize(
+    ("row", "port", "problem"),
+    [
+        (
+            ("medibridge_demo", "other", "other", 4242, DEMO_MARKER, "read committed"),
+            5432,
+            "connected role is other",
+        ),
+        (
+            ("medibridge_demo", "operator", "admin", 4242, DEMO_MARKER, "read committed"),
+            5432,
+            "connected role is operator",
+        ),
+        (
+            ("medibridge_demo", "operator", "operator", 4242, DEMO_MARKER, "read committed"),
+            6543,
+            "connected port is 6543",
+        ),
+        (
+            ("postgres", "operator", "operator", 5, DEMO_MARKER, "read committed"),
+            5432,
+            "postgres is protected",
+        ),
+    ],
+    ids=["role", "session-role", "port", "protected-connected-database"],
+)
+def test_connected_identity_mismatches_are_refused(row, port, problem):
+    with pytest.raises(seed_demo_data.SeedRefused) as raised:
+        seed_demo_data.verify_target(
+            FakeIdentityConnection(row, port), DEMO_TARGET, "medibridge_demo"
+        )
+    assert raised.value.exit_code == seed_demo_data.EXIT_REFUSED_TARGET
+    assert problem in str(raised.value)
+
+
+def test_matching_identity_and_marker_are_accepted():
+    row = ("medibridge_demo", "operator", "operator", 4242, DEMO_MARKER, "read committed")
+    identity = seed_demo_data.verify_target(
+        FakeIdentityConnection(row), DEMO_TARGET, "medibridge_demo"
+    )
+    assert identity == {"database": "medibridge_demo", "role": "operator", "oid": 4242}
+
+
+def test_target_line_escapes_control_characters(monkeypatch, capsys):
+    def refuse(target, **kwargs):
+        raise seed_demo_data.SeedRefused("stop", seed_demo_data.EXIT_DATABASE_UNAVAILABLE)
+
+    monkeypatch.setattr(seed_demo_data, "open_connection", refuse)
+    environ = {**PLACEHOLDER_ENV, "DB_HOST": "db\x1b[2J.example", "DB_NAME": "demo"}
+
+    code, output = run("demo", "--dry-run", environ=environ)
+
+    assert code == seed_demo_data.EXIT_DATABASE_UNAVAILABLE
+    assert "\x1b" not in output
+    assert "\\x1b[2J" in output
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected", "message"),
+    [
+        (KeyboardInterrupt(), seed_demo_data.EXIT_UNEXPECTED, "interrupted"),
+        (
+            psycopg.OperationalError("lost"),
+            seed_demo_data.EXIT_DATABASE_UNAVAILABLE,
+            "connection failed",
+        ),
+        (RuntimeError("boom"), seed_demo_data.EXIT_UNEXPECTED, "unexpected error (RuntimeError)"),
+    ],
+    ids=["interrupt", "connection-lost", "python-error"],
+)
+def test_failures_before_commit_are_reported_as_not_committed(exc, expected, message):
+    refused = seed_demo_data.failure_before_commit(exc)
+    assert refused.exit_code == expected
+    assert message in str(refused)
+    assert str(refused).endswith("nothing was written (the transaction was not committed)")
+
+
+def test_default_anchor_is_midnight_utc_today():
+    anchor = seed_demo_data.default_anchor()
+    now = datetime.now(UTC)
+    assert anchor.tzinfo is UTC
+    assert (anchor.hour, anchor.minute, anchor.second, anchor.microsecond) == (0, 0, 0, 0)
+    assert timedelta(0) <= now - anchor < timedelta(days=1, minutes=1)
+
+
 # --- dry run ----------------------------------------------------------------------------
 
 
