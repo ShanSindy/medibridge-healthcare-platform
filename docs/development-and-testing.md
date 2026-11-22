@@ -72,7 +72,7 @@ at the end of a normal run); there is no separate database lifecycle.
 | Module | What it checks | Tests |
 |---|---|---|
 | `test_pg_appointments.py` | Overlap rules from migration 005 through the real routes: identical, partial, containing and contained intervals, back-to-back, other providers, UTC offsets, cancelled and completed appointments, updates | 14 |
-| `test_pg_concurrency.py` | Two transactions competing for the same appointment slot (A commits or rolls back), the same HL7 control ID, and the same MRN under different control IDs | 4 |
+| `test_pg_concurrency.py` | Two transactions competing for the same appointment slot (A commits or rolls back), the same HL7 control ID, and the same MRN under different control IDs (service call, and real HTTP requests with JSON and HL7 acknowledgment responses) | 6 |
 | `test_pg_patient_audit.py` | Patient handlers commit the change and its audit event together, write none for rejected changes, and roll both back on failure | 7 |
 | `test_pg_providers.py` | Provider CRUD round trip; duplicate emails that differ only in case | 2 |
 | `test_pg_fhir_practitioners.py` | Practitioner and PractitionerRole read, search, paging and 404 against real rows | 6 |
@@ -120,9 +120,14 @@ synthetic MRNs and message IDs.
 CI runs these tests as the non-superuser `medibridge_tester` role.
 
 **HL7 registrations with the same MRN.** `test_pg_concurrency.py` also covers two
-`ADT^A04` messages for the same MRN with different control IDs: the second waits for the
-first and then reports `already_exists` for the first patient, with one patient, one
-identifier and both messages recorded.
+`ADT^A04` messages for the same MRN with different control IDs, in the contention order
+where both have passed the MRN lookup: the second is shown (through `pg_blocking_pids`) to
+wait on the identifier insert, and after the first commits it reports `already_exists` for
+the first patient, with one patient, one identifier and both messages recorded. The same
+scenario also runs through `POST /hl7/adt` for the JSON response and the `AA`
+acknowledgment. Registrations that do not overlap take the ordinary sequential
+`already_exists` path instead. The tests assert that the waiting connection runs at
+READ COMMITTED, which the recovery relies on.
 
 ## Coverage
 
