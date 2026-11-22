@@ -214,7 +214,7 @@ independent human verification.
 
 The roadmap is a proposal and may change. There are no committed dates.
 
-**Phase 1: Engineering foundation** (current; status as of 2026-11-21)
+**Phase 1: Engineering foundation** (complete; status as of 2026-11-22)
 
 | Task | Status |
 |---|---|
@@ -223,7 +223,7 @@ The roadmap is a proposal and may change. There are no committed dates.
 | 3. Quality gates and CI | Done ([#19](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/19)) |
 | 4. API router refactoring | Done ([#20](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/20)) |
 | 5. Documentation | Done ([#21](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/21)) |
-| 6. PostgreSQL integration testing | In progress |
+| 6. PostgreSQL integration testing | Done ([#22](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/22)) |
 
 Follow-up before Phase 2: a supported first-user provisioning command and reproducible
 synthetic demo data.
@@ -232,7 +232,7 @@ synthetic demo data.
 
 | Phase | Focus, including known backlog items |
 |---|---|
-| 2. Database modernization | SQLAlchemy and Alembic (planned, not implemented); connection timeouts and pooling |
+| 2. Database modernization | SQLAlchemy Core and Alembic (proposed, pending implementation); connection timeouts and pooling |
 | 3. API enhancement | Pagination and search for REST lists |
 | 4. Healthcare interoperability | HL7 version validation; consistent FHIR content types, errors and absolute links |
 | 5. Security and audit foundations | Broader audit coverage; login rate limiting and other authentication hardening |
