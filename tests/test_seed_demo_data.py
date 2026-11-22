@@ -167,13 +167,30 @@ def test_dataset_is_deterministic_synthetic_and_free_of_scheduling_conflicts():
 # --- refusals before connecting ---------------------------------------------------------
 
 
-@pytest.mark.parametrize("database", sorted(seed_demo_data.PROTECTED_DATABASES))
-def test_every_protected_database_is_refused_before_connecting(database, no_connection):
+# Listed here independently of the module, so that shrinking the module's list fails tests
+# instead of silently removing parameters.
+EXPECTED_PROTECTED = (
+    "medibridge",
+    "medibridge_ci_test",
+    "medibridge_test",
+    "postgres",
+    "template0",
+    "template1",
+)
+
+
+def test_protected_database_list_is_complete():
+    assert set(EXPECTED_PROTECTED) <= seed_demo_data.PROTECTED_DATABASES
+
+
+@pytest.mark.parametrize("database", EXPECTED_PROTECTED)
+def test_every_protected_database_is_refused_before_connecting(database, no_connection, capsys):
     code, output = run(
         database, "--confirm-synthetic-demo", environ={**PLACEHOLDER_ENV, "DB_NAME": database}
     )
 
     assert code == seed_demo_data.EXIT_REFUSED_TARGET
+    assert f"refusing to seed the protected database {database}" in capsys.readouterr().err
     assert "placeholder-not-a-secret" not in output
 
 
@@ -186,7 +203,7 @@ def test_configured_target_mismatch_is_refused_before_connecting(no_connection, 
     assert "does not match the configured DB_NAME" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("missing", seed_demo_data.REQUIRED_SETTINGS)
+@pytest.mark.parametrize("missing", ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"])
 def test_missing_configuration_is_refused_before_connecting(missing, no_connection, capsys):
     environ = {**PLACEHOLDER_ENV, "DB_NAME": "demo"}
     environ.pop(missing, None)
