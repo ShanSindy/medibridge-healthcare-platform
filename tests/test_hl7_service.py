@@ -550,19 +550,9 @@ def test_register_patient_from_hl7_does_not_absorb_other_unique_violations(
     roll back the message tracking, instead of being reported as already_exists.
     """
     import hl7_service
-    from tests import db_safety
 
     def verified_connection():
-        conn = get_connection()
-        found, role_oid = db_safety.fetch_identity(conn, disposable_database.name)
-        db_safety.check_identity(
-            session_name=disposable_database.name,
-            created=disposable_database.created,
-            found=found,
-            current_role_oid=role_oid,
-            require_marker=True,
-        )
-        return conn
+        return _verified_connection(disposable_database)
 
     provider_sql = (
         "INSERT INTO providers (first_name, last_name, specialty, email) VALUES (%s, %s, %s, %s)"
@@ -606,3 +596,56 @@ def test_register_patient_from_hl7_does_not_absorb_other_unique_violations(
         ).fetchone()
     # Only the separately committed patient remains; tracking and the second provider rolled back.
     assert counts == (1, 1, 0, 1)
+
+
+def _verified_connection(disposable_database):
+    """
+    A get_connection() connection, returned only after its identity is verified as this
+    session's disposable database. Closed before re-raising if verification fails.
+    """
+    from tests import db_safety
+
+    conn = get_connection()
+    try:
+        found, role_oid = db_safety.fetch_identity(conn, disposable_database.name)
+        db_safety.check_identity(
+            session_name=disposable_database.name,
+            created=disposable_database.created,
+            found=found,
+            current_role_oid=role_oid,
+            require_marker=True,
+        )
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
+@pytest.mark.parametrize("failing_step", ["fetch_identity", "check_identity"])
+def test_verified_connection_closes_the_connection_when_verification_fails(
+    disposable_database, monkeypatch, failing_step
+):
+    from tests import db_safety
+
+    opened = []
+    real_get_connection = get_connection
+
+    def recording_get_connection():
+        conn = real_get_connection()
+        opened.append(conn)
+        return conn
+
+    class VerificationFailed(Exception):
+        pass
+
+    def fail(*args, **kwargs):
+        raise VerificationFailed(failing_step)
+
+    monkeypatch.setattr(f"{__name__}.get_connection", recording_get_connection)
+    monkeypatch.setattr(db_safety, failing_step, fail)
+
+    with pytest.raises(VerificationFailed):
+        _verified_connection(disposable_database)
+
+    assert len(opened) == 1
+    assert opened[0].closed

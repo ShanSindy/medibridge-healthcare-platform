@@ -54,6 +54,10 @@ def register_patient_from_hl7(message: str) -> dict:
             except UniqueViolation as exc:
                 if exc.diag.constraint_name != PATIENT_IDENTIFIER_CONSTRAINT:
                     raise
+                # Assumes READ COMMITTED (PostgreSQL's default; not set anywhere by
+                # MediBridge): this statement takes a new snapshot that includes the
+                # committed winner. Under REPEATABLE READ or SERIALIZABLE the winner may
+                # be invisible here, and the violation is then re-raised below.
                 existing_id = _patient_id_for_mrn(cur, patient["mrn"])
                 if existing_id is None:
                     raise
