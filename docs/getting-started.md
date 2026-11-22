@@ -15,7 +15,7 @@ new non-superuser role.
 | 3. Role and database | The `CREATE ROLE` and `CREATE DATABASE ... OWNER` statements were executed with unique names through a script, which set the password the way `\password` does; the interactive `psql` session itself was not run |
 | 4. `.env`: copy, placeholder rejected, key generated | Executed in Windows PowerShell; key command also in Git Bash |
 | 5. Migrations, including `btree_gist`, as the non-superuser owner; re-run skips | Executed against real PostgreSQL |
-| 6. First-user procedure | Both Python blocks executed verbatim in Python's interactive console, with the prompts answered by a script rather than typed by a person |
+| 6. `provision_user.py` | Tests run the command's code against real PostgreSQL (creation, duplicates, sign-in) and the real entry point as a child process (help, refusal without a terminal); an interactive session typed by a person was not run |
 | 8. Backend, `/health`, `/docs`, `/redoc`, `/openapi.json`, sign-in | Executed against real PostgreSQL |
 | 9. Frontend `npm ci`, demo mode, API mode through the `/api` proxy, sign-in | Executed (Git Bash and headless Chrome on Windows) |
 | POSIX commands | Run in Git Bash on Windows only; not executed on Linux or macOS |
@@ -137,59 +137,42 @@ recorded in the `schema_migrations` table, so running it again is safe. Each mig
 runs in its own transaction: if one fails, it is rolled back and not recorded, and the
 script stops. It ends with `Database migrations complete.`
 
-## 6. Create the first user (temporary developer procedure)
+## 6. Create the first user
 
-There is no sign-up endpoint, seed script or user-management command yet. Until a
-supported provisioning command exists (planned before Phase 2), create users by calling
-the existing `user_service.create_user` function from a Python session. This is a
-developer onboarding step, not a supported production user-provisioning interface.
+There is no sign-up endpoint and no default account. Create users with
+`provision_user.py`, from the repository root with the environment active:
 
-What the function does, from [user_service.py](../user_service.py):
-
-- `create_user(username, email, password, role="viewer")` hashes the password with
-  Argon2id and inserts one row into `users`, committing on success.
-- It connects with the settings from `.env`, like the application.
-- It has no password policy. The database enforces unique usernames and emails and a
-  role of `admin`, `clinician`, `scheduler` or `viewer`; a violation raises an error and
-  nothing is written.
-- It returns the new user's `id`, `username`, `email`, `role`, `is_active` and
-  `created_at` (never the password or hash).
-
-Start `python` in the repository root and paste the first block. It only reads which
-database and role you are connected to:
-
-```python
-from database import get_connection
-
-with get_connection() as conn:
-    print(
-        conn.execute(
-            "SELECT current_database(), current_user, inet_server_addr(), inet_server_port()"
-        ).fetchone()
-    )
+```bash
+python provision_user.py --database medibridge_dev --username jordan.admin --email jordan.admin@example.org --role admin --confirm-admin
 ```
 
-**Stop if that is not your development database.** Otherwise paste the second block in
-the same session. It asks for each value. The password is read with `getpass`: it is not
-echoed and does not appear in shell or Python history (the username, email and role you
-type may be recorded in Python's history, so they should be synthetic too):
+- `--database` must equal `DB_NAME` from `.env` (or the environment); otherwise nothing is
+  done. The command prints the target database, host, port and database role (never the
+  database password) before asking for anything.
+- `--role` is one of `admin`, `clinician`, `scheduler` or `viewer`. Creating an `admin`
+  also requires `--confirm-admin`.
+- The password is asked for twice and is not echoed. It is never a command-line argument.
+  It must be 12 to 1024 characters (a rule of this command only; the application itself
+  has no password policy). Without an interactive terminal the command refuses instead of
+  reading visible input.
+- The account is stored with the application's own user service (Argon2id). An existing
+  username or email is reported and left unchanged; the command never updates or resets a
+  user.
+- The schema must exist: run `python migrate.py` first.
 
-```python
-from getpass import getpass
-from user_service import create_user
+Create an `admin` first; every further account (for example a `clinician` for viewing
+patients) is created the same way, because the API has no user-management endpoints.
 
-user = create_user(
-    username=input("Username: "),
-    email=input("Email (use a reserved domain such as example.org): "),
-    password=getpass("Password: "),
-    role=input("Role (admin, clinician, scheduler or viewer): "),
-)
-print({key: user[key] for key in ("id", "username", "role")})
-```
-
-Create an `admin` account first: it has every permission in the API. The API has no
-user-management endpoints, so every further account (for example a `clinician` for
-viewing patients) is created with this same procedure.
+| Exit code | Meaning |
+|---|---|
+| 0 | User created |
+| 1 | Unexpected error (only the PostgreSQL error code is shown) |
+| 2 | Invalid arguments, or `admin` without `--confirm-admin` |
+| 3 | Missing `DB_*` settings, or `--database` does not match `DB_NAME` |
+| 4 | Password not accepted: too short or long, confirmation differs, or no secure terminal |
+| 5 | Database unreachable, or not migrated |
+| 6 | A user with this username or email already exists |
+| 130 | Interrupted; nothing was changed |
 
 ## 7. Synthetic data
 
@@ -256,6 +239,6 @@ API; the [frontend README](../frontend/README.md) explains each mode.
 | A request hangs instead of failing when PostgreSQL is down | Known limitation: connections are opened without a timeout. Check that PostgreSQL is running and the `DB_*` settings are correct, then stop the request |
 | `/health` is fine but other requests fail | `/health` does not check the database. Check PostgreSQL and the `DB_*` settings |
 | `.venv\Scripts\Activate.ps1` is blocked by execution policy | Run the environment's interpreter directly instead, for example `.venv\Scripts\python -m pip ...` and `.venv\Scripts\python migrate.py` |
-| `401 Incorrect username or password` | Wrong credentials, an inactive account, or a user created in a different database (check step 6's first block) |
+| `401 Incorrect username or password` | Wrong credentials, an inactive account, or a user created in a different database (check the target printed by `provision_user.py`) |
 | The browser shows CORS errors | Use `VITE_API_BASE_URL=/api` so requests go through the Vite proxy |
 | Frontend problems such as missing styles or a blank page | See the troubleshooting section of the [frontend README](../frontend/README.md#troubleshooting) |
