@@ -15,7 +15,7 @@ new non-superuser role.
 | 3. Role and database | The `CREATE ROLE` and `CREATE DATABASE ... OWNER` statements were executed with unique names through a script, which set the password the way `\password` does; the interactive `psql` session itself was not run |
 | 4. `.env`: copy, placeholder rejected, key generated | Executed in Windows PowerShell; key command also in Git Bash |
 | 5. Migrations, including `btree_gist`, as the non-superuser owner; re-run skips | Executed against real PostgreSQL |
-| 6. `provision_user.py` | Tests run the command's code against real PostgreSQL (creation, duplicates, sign-in) and the real entry point as a child process (help, refusal without a terminal); an interactive session typed by a person was not run |
+| 6. `provision_user.py` | Tests run the command's code against real PostgreSQL (creation, duplicates, sign-in, target mismatch, lock timeout, rollback before commit) and the real entry point as a child process (help, refusal without a terminal). Console detection was checked with the real Windows API in a hidden console, with `NUL` and with a pipe (2026-11-22). A password typed by a person at a real console has not been verified |
 | 8. Backend, `/health`, `/docs`, `/redoc`, `/openapi.json`, sign-in | Executed against real PostgreSQL |
 | 9. Frontend `npm ci`, demo mode, API mode through the `/api` proxy, sign-in | Executed (Git Bash and headless Chrome on Windows) |
 | POSIX commands | Run in Git Bash on Windows only; not executed on Linux or macOS |
@@ -146,33 +146,55 @@ There is no sign-up endpoint and no default account. Create users with
 python provision_user.py --database medibridge_dev --username jordan.admin --email jordan.admin@example.org --role admin --confirm-admin
 ```
 
-- `--database` must equal `DB_NAME` from `.env` (or the environment); otherwise nothing is
-  done. The command prints the target database, host, port and database role (never the
-  database password) before asking for anything.
-- `--role` is one of `admin`, `clinician`, `scheduler` or `viewer`. Creating an `admin`
-  also requires `--confirm-admin`.
-- The password is asked for twice and is not echoed. It is never a command-line argument.
-  It must be 12 to 1024 characters (a rule of this command only; the application itself
-  has no password policy). Without an interactive terminal the command refuses instead of
-  reading visible input.
-- The account is stored with the application's own user service (Argon2id). An existing
-  username or email is reported and left unchanged; the command never updates or resets a
-  user.
-- The schema must exist: run `python migrate.py` first.
+What the command does, in order:
+
+1. Checks the arguments. `--role` is one of `admin`, `clinician`, `scheduler` or `viewer`;
+   an `admin` also requires `--confirm-admin`. The username must not contain whitespace or
+   control characters (at most 50 characters). The email address gets a basic check of this
+   command only, not an application-wide policy: exactly one `@`, a non-empty local part,
+   and a domain of at least two labels (letters, digits, inner hyphens; internationalised
+   domains in punycode).
+2. Reads `DB_*` settings from the environment, then from `.env` next to the script for
+   anything the environment does not set (the application's own precedence;
+   `PYTHON_DOTENV_DISABLED` is honoured). `--database` must equal `DB_NAME`. It prints the
+   target database, host, port and database role, never the database password.
+3. Requires an interactive terminal, then asks for the password twice without echo. It is
+   never a command-line argument and must be 12 to 1024 characters (a rule of this command
+   only). Without a terminal, or if the terminal cannot hide input, the command refuses.
+   Nothing has connected to the database yet.
+4. Opens one connection with a 10 s connect timeout, a 10 s lock timeout and a 30 s
+   statement timeout (for this session only). On that connection it checks the actual
+   database (`current_database()`), role (`current_user`, `session_user`) and port against
+   the requested target, then inserts the user with the application's user service
+   (Argon2id) and commits, all in one transaction on the same connection.
+
+The identity check catches accidental mis-targeting, for example a connection-pooler alias
+that maps the name to another database. It is not an authentication of the server; that
+requires TLS with certificate verification, which MediBridge does not configure.
+
+An existing username or email is reported and left unchanged; the command never updates or
+resets a user. The schema must exist: run `python migrate.py` first.
 
 Create an `admin` first; every further account (for example a `clinician` for viewing
 patients) is created the same way, because the API has no user-management endpoints.
 
 | Exit code | Meaning |
 |---|---|
-| 0 | User created |
-| 1 | Unexpected error (only the PostgreSQL error code is shown) |
+| 0 | User created and committed |
+| 1 | Unexpected error (only the PostgreSQL error code or error type is shown); not committed |
 | 2 | Invalid arguments, or `admin` without `--confirm-admin` |
-| 3 | Missing `DB_*` settings, or `--database` does not match `DB_NAME` |
+| 3 | Missing `DB_*` settings, `--database` does not match `DB_NAME`, or the connected database, role or port differs; not committed |
 | 4 | Password not accepted: too short or long, confirmation differs, or no secure terminal |
-| 5 | Database unreachable, or not migrated |
-| 6 | A user with this username or email already exists |
-| 130 | Interrupted; nothing was changed |
+| 5 | Database unreachable, busy beyond the timeouts, or not migrated; not committed |
+| 6 | A user with this username or email already exists; not committed |
+| 7 | **Outcome unknown**: the connection failed or the command was interrupted while committing |
+| 130 | Interrupted during password entry (nothing was sent to the database) or before the commit (not committed) |
+
+"Not committed" is certain in every case except exit code 7, because those failures happen
+before the command sends `COMMIT`. With exit code 7 the user may or may not exist. Do not
+run the command again straight away; first check, for example with
+`psql -d medibridge_dev -c "SELECT id, username, role, created_at FROM users WHERE username = 'jordan.admin'"`
+or by signing in. Run the command again only if the user does not exist.
 
 ## 7. Synthetic data
 
