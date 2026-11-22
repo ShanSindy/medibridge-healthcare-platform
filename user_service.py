@@ -7,8 +7,17 @@ def create_user(
     email: str,
     password: str,
     role: str = "viewer",
+    *,
+    conn=None,
 ) -> dict:
-    """Create a user account with a securely hashed password."""
+    """
+    Create a user account with a securely hashed password.
+
+    Without `conn`, the user is inserted on a new connection and committed (unchanged
+    behaviour). With a caller-owned `conn`, the INSERT runs in that connection's current
+    transaction and is neither committed nor rolled back here: the caller owns the
+    transaction and decides its outcome.
+    """
 
     password_hash = hash_password(password)
 
@@ -22,14 +31,16 @@ def create_user(
         VALUES (%s, %s, %s, %s)
         RETURNING id, username, email, role, is_active, created_at;
     """
+    params = (username, email, password_hash, role)
 
-    with get_connection() as conn:
+    if conn is None:
+        with get_connection() as own_conn:
+            with own_conn.cursor() as cur:
+                cur.execute(query, params)
+                row = cur.fetchone()
+    else:
         with conn.cursor() as cur:
-            cur.execute(
-                query,
-                (username, email, password_hash, role),
-            )
-
+            cur.execute(query, params)
             row = cur.fetchone()
 
     return {

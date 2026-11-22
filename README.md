@@ -121,8 +121,8 @@ You need Python 3.14, PostgreSQL, Node.js 26 and Git. In short:
 4. Run `python migrate.py`, create a first user, and start `uvicorn main:app`.
 5. In `frontend/`, run `npm ci` and `npm run dev`.
 
-The full procedure for Windows PowerShell and POSIX shells, including the temporary
-first-user procedure and troubleshooting, is in
+The full procedure for Windows PowerShell and POSIX shells, including creating the
+first user with `provision_user.py` and troubleshooting, is in
 [docs/getting-started.md](docs/getting-started.md). It was followed end to end on Windows;
 the guide states which steps were executed and how. The frontend runs on its own in demo
 mode with no backend.
@@ -225,8 +225,9 @@ The roadmap is a proposal and may change. There are no committed dates.
 | 5. Documentation | Done ([#21](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/21)) |
 | 6. PostgreSQL integration testing | Done ([#22](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/22)) |
 
-Follow-up before Phase 2: a supported first-user provisioning command and reproducible
-synthetic demo data.
+First users are created with `provision_user.py` (see
+[docs/getting-started.md](docs/getting-started.md)). Follow-up before Phase 2: reproducible
+synthetic demo data (pending, separate change).
 
 **Later phases (proposed)**
 
