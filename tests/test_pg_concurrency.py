@@ -453,3 +453,78 @@ def test_duplicate_hl7_control_id_waits_and_is_reported_as_duplicate(
         ("SYN-CONC-123",),
     ).fetchone()
     assert counts == (1, 1, 1)
+
+
+# --- HL7 same MRN, different control IDs ----------------------------------------------
+
+
+def registration(control_id, mrn):
+    return (
+        f"MSH|^~\\&|SYN_CONC|SYN_FAC|MEDIBRIDGE|MEDIBRIDGE|20311106120000||ADT^A04|{control_id}|P|2.5\r"
+        "EVN|A04|20311106120000\r"
+        f"PID|1||{mrn}^^^SYN_FAC^MR||Concurrent^Morgan||19880412|F"
+    )
+
+
+def test_concurrent_registrations_of_the_same_mrn_converge_on_one_patient(
+    connect, monkeypatch, disposable_database, record_property
+):
+    """
+    A (direct SQL) holds the writes of a first ADT^A04 for MRN SYN-CONC-777 under control
+    ID SYN-CONC-A. B is the real register_patient_from_hl7 for the same MRN under a
+    different control ID, so its tracking insert succeeds and it blocks on the identifier.
+    After A commits, B must report the existing patient instead of failing.
+    """
+    seen = observe_worker_connection(monkeypatch, hl7_service, disposable_database)
+    held = {}
+
+    def hold(cursor):
+        cursor.execute(
+            "INSERT INTO hl7_messages "
+            "(sending_application, sending_facility, message_control_id, message_type) "
+            "VALUES (%s, %s, %s, %s)",
+            ("SYN_CONC", "SYN_FAC", "SYN-CONC-A", "ADT^A04"),
+        )
+        cursor.execute(
+            "INSERT INTO patients (first_name, last_name, date_of_birth, gender) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            ("Morgan", "Concurrent", "1988-04-12", "female"),
+        )
+        held["patient_id"] = cursor.fetchone()[0]
+        cursor.execute(
+            "INSERT INTO patient_identifiers (patient_id, system, value) VALUES (%s, %s, %s)",
+            (held["patient_id"], MRN_SYSTEM, "SYN-CONC-777"),
+        )
+
+    (kind, value), evidence = run_race(
+        connect,
+        seen,
+        hold,
+        lambda: hl7_service.register_patient_from_hl7(registration("SYN-CONC-B", "SYN-CONC-777")),
+        "commit",
+        disposable_database,
+    )
+
+    assert_blocking_evidence(evidence, "INSERT INTO PATIENT_IDENTIFIERS", record_property)
+    assert kind == "ok", value
+    assert value == {
+        "status": "already_exists",
+        "patient_id": held["patient_id"],
+        "mrn": "SYN-CONC-777",
+    }
+    conn = connect(autocommit=True)
+    assert conn.execute(
+        "SELECT (SELECT count(*) FROM patients), "
+        "(SELECT count(*) FROM patient_identifiers WHERE value = %s)",
+        ("SYN-CONC-777",),
+    ).fetchone() == (1, 1)
+    tracked = conn.execute(
+        "SELECT message_control_id FROM hl7_messages ORDER BY message_control_id"
+    ).fetchall()
+    assert [row[0] for row in tracked] == ["SYN-CONC-A", "SYN-CONC-B"]
+
+    # Both processed control IDs are now replays.
+    for control_id in ("SYN-CONC-A", "SYN-CONC-B"):
+        replay = hl7_service.register_patient_from_hl7(registration(control_id, "SYN-CONC-777"))
+        assert replay["status"] == "duplicate"
+    assert conn.execute("SELECT count(*) FROM hl7_messages").fetchone()[0] == 2

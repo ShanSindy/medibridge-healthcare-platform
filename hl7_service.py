@@ -1,3 +1,5 @@
+from psycopg.errors import UniqueViolation
+
 from database import get_connection
 from hl7_parser import (
     extract_hl7_message_metadata,
@@ -7,6 +9,9 @@ from hl7_parser import (
 from hl7_tracking import record_hl7_message
 
 HL7_MRN_SYSTEM = "https://medibridge.example.org/mrn"
+
+# UNIQUE (system, value) on patient_identifiers: one patient per MRN in this system.
+PATIENT_IDENTIFIER_CONSTRAINT = "unique_patient_identifier"
 
 
 def register_patient_from_hl7(message: str) -> dict:
@@ -35,51 +40,73 @@ def register_patient_from_hl7(message: str) -> dict:
                     "message_control_id": metadata["message_control_id"],
                 }
 
-            cur.execute(
-                """
-                SELECT patient_id
-                FROM patient_identifiers
-                WHERE system = %s AND value = %s
-                """,
-                (HL7_MRN_SYSTEM, patient["mrn"]),
-            )
+            existing_id = _patient_id_for_mrn(cur, patient["mrn"])
 
-            existing = cur.fetchone()
+            if existing_id is not None:
+                return _already_exists(existing_id, patient["mrn"])
 
-            if existing:
-                return {
-                    "status": "already_exists",
-                    "patient_id": existing[0],
-                    "mrn": patient["mrn"],
-                }
-
-            cur.execute(
-                """
-                INSERT INTO patients
-                    (first_name, last_name, date_of_birth, gender)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    patient["first_name"],
-                    patient["last_name"],
-                    patient["date_of_birth"],
-                    patient["gender"],
-                ),
-            )
-
-            patient_id = cur.fetchone()[0]
-
-            cur.execute(
-                """
-                INSERT INTO patient_identifiers
-                    (patient_id, system, value)
-                VALUES (%s, %s, %s)
-                """,
-                (patient_id, HL7_MRN_SYSTEM, patient["mrn"]),
-            )
+            try:
+                # Savepoint: if a concurrent registration commits the same MRN first,
+                # only the patient and identifier inserts are undone; the message
+                # tracking row and the surrounding transaction stay usable.
+                with conn.transaction():
+                    patient_id = _insert_patient_with_mrn(cur, patient)
+            except UniqueViolation as exc:
+                if exc.diag.constraint_name != PATIENT_IDENTIFIER_CONSTRAINT:
+                    raise
+                existing_id = _patient_id_for_mrn(cur, patient["mrn"])
+                if existing_id is None:
+                    raise
+                return _already_exists(existing_id, patient["mrn"])
 
     return {"status": "created", "patient_id": patient_id, "mrn": patient["mrn"]}
+
+
+def _patient_id_for_mrn(cur, mrn: str) -> int | None:
+    cur.execute(
+        """
+        SELECT patient_id
+        FROM patient_identifiers
+        WHERE system = %s AND value = %s
+        """,
+        (HL7_MRN_SYSTEM, mrn),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _already_exists(patient_id: int, mrn: str) -> dict:
+    return {"status": "already_exists", "patient_id": patient_id, "mrn": mrn}
+
+
+def _insert_patient_with_mrn(cur, patient: dict) -> int:
+    cur.execute(
+        """
+        INSERT INTO patients
+            (first_name, last_name, date_of_birth, gender)
+        VALUES (%s, %s, %s, %s)
+        RETURNING id
+        """,
+        (
+            patient["first_name"],
+            patient["last_name"],
+            patient["date_of_birth"],
+            patient["gender"],
+        ),
+    )
+
+    patient_id = cur.fetchone()[0]
+
+    cur.execute(
+        """
+        INSERT INTO patient_identifiers
+            (patient_id, system, value)
+        VALUES (%s, %s, %s)
+        """,
+        (patient_id, HL7_MRN_SYSTEM, patient["mrn"]),
+    )
+
+    return patient_id
 
 
 def update_patient_from_hl7(message: str) -> dict:

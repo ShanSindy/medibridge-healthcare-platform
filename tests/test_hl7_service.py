@@ -538,3 +538,71 @@ def test_update_patient_from_hl7_tracking_rollback():
             message_count = cur.fetchone()[0]
 
     assert message_count == 0
+
+
+def test_register_patient_from_hl7_does_not_absorb_other_unique_violations(
+    disposable_database, monkeypatch
+):
+    """
+    Only unique_patient_identifier conflicts are recovered. Here a patient with the same MRN
+    is committed by another connection (as a concurrent winner would be) and then a different
+    unique constraint fails inside the registration savepoint: the error must propagate and
+    roll back the message tracking, instead of being reported as already_exists.
+    """
+    import hl7_service
+    from tests import db_safety
+
+    def verified_connection():
+        conn = get_connection()
+        found, role_oid = db_safety.fetch_identity(conn, disposable_database.name)
+        db_safety.check_identity(
+            session_name=disposable_database.name,
+            created=disposable_database.created,
+            found=found,
+            current_role_oid=role_oid,
+            require_marker=True,
+        )
+        return conn
+
+    provider_sql = (
+        "INSERT INTO providers (first_name, last_name, specialty, email) VALUES (%s, %s, %s, %s)"
+    )
+    with verified_connection() as conn:
+        conn.execute(provider_sql, ("Sam", "Specific", "Cardiology", "sam.specific@example.org"))
+
+    real_insert = hl7_service._insert_patient_with_mrn
+
+    def commit_same_mrn_elsewhere_then_violate_another_constraint(cur, patient):
+        with verified_connection() as other:
+            winner = other.execute(
+                "INSERT INTO patients (first_name, last_name, date_of_birth, gender) "
+                "VALUES ('Robin', 'Specific', '1990-01-01', 'unknown') RETURNING id"
+            ).fetchone()[0]
+            other.execute(
+                "INSERT INTO patient_identifiers (patient_id, system, value) VALUES (%s, %s, %s)",
+                (winner, HL7_MRN_SYSTEM, patient["mrn"]),
+            )
+        cur.execute(provider_sql, ("Sam", "Again", "Cardiology", "sam.specific@example.org"))
+        return real_insert(cur, patient)
+
+    monkeypatch.setattr(
+        hl7_service,
+        "_insert_patient_with_mrn",
+        commit_same_mrn_elsewhere_then_violate_another_constraint,
+    )
+    message = (
+        "MSH|^~\\&|SYN_SPEC|SYN_FAC|MEDIBRIDGE|MEDIBRIDGE|20311106120000||ADT^A04|SYN-SPEC-1|P|2.5\r"
+        "PID|1||SYN-SPEC-1^^^SYN_FAC^MR||Specific^Robin||19900101|U"
+    )
+
+    with pytest.raises(psycopg.errors.UniqueViolation) as raised:
+        register_patient_from_hl7(message)
+
+    assert raised.value.diag.constraint_name == "providers_email_key"
+    with verified_connection() as conn:
+        counts = conn.execute(
+            "SELECT (SELECT count(*) FROM patients), (SELECT count(*) FROM patient_identifiers), "
+            "(SELECT count(*) FROM hl7_messages), (SELECT count(*) FROM providers)"
+        ).fetchone()
+    # Only the separately committed patient remains; tracking and the second provider rolled back.
+    assert counts == (1, 1, 0, 1)
