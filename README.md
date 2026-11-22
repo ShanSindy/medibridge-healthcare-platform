@@ -225,8 +225,9 @@ The roadmap is a proposal and may change. There are no committed dates.
 | 5. Documentation | Done ([#21](https://github.com/ShanSindy/medibridge-healthcare-platform/pull/21)) |
 | 6. PostgreSQL integration testing | In progress |
 
-Follow-up before Phase 2: a supported first-user provisioning command (`provision_user.py`)
-and reproducible synthetic demo data.
+First users are created with `provision_user.py` (see
+[docs/getting-started.md](docs/getting-started.md)). Follow-up before Phase 2: reproducible
+synthetic demo data (pending, separate change).
 
 **Later phases (proposed)**
 
