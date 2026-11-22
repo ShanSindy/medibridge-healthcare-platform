@@ -191,12 +191,44 @@ Create an `admin` account first: it has every permission in the API. The API has
 user-management endpoints, so every further account (for example a `clinician` for
 viewing patients) is created with this same procedure.
 
-## 7. Synthetic data
+## 7. Synthetic demonstration data (optional)
 
-There is no seed or demo-data script for the backend. Create records through the API (see
-[api.md](api.md)) or by sending synthetic HL7 `ADT^A04` messages (see
-[interoperability.md](interoperability.md)). Use obviously fictional names, dates and
-identifiers, and reserved domains such as `example.org` for email addresses.
+`seed_demo_data.py` loads a fixed synthetic dataset into an **empty** database: 16 fictional
+patients with MRNs `DEMO-000001` to `DEMO-000016`, 6 providers in 6 specialties
+(`example.org` addresses) and 20 appointments (11 scheduled, 6 completed, 3 cancelled).
+It creates no users, passwords or audit events.
+
+Check the target first; a dry run writes nothing:
+
+```bash
+python seed_demo_data.py --database medibridge_dev --dry-run
+python seed_demo_data.py --database medibridge_dev --confirm-synthetic-demo
+```
+
+- `--database` must equal `DB_NAME`. The names `medibridge`, `medibridge_test`,
+  `medibridge_ci_test`, `postgres`, `template0` and `template1` are always refused. A name is
+  not proof that a database is safe: only point the command at a database you created for
+  demonstrations.
+- The patient, identifier, provider and appointment tables must all be empty; users may
+  already exist. A second run is **refused** (exit code 4) and changes nothing; the command
+  is not idempotent and never updates, deletes or resets data. To start again, use a new
+  empty database.
+- Everything is inserted in one transaction, after locking the four tables, so a failure
+  or a second concurrent run leaves nothing behind.
+- Appointment dates are relative to midnight UTC today, or to `--anchor` (for example
+  `--anchor 2031-01-06T00:00:00+00:00`) for a reproducible dataset.
+
+Exit codes: 0 seeded (or dry run found empty tables), 1 unexpected error, 2 invalid
+arguments, 3 target refused, 4 tables not empty, 5 database unavailable or not migrated.
+
+With the backend running and a user created (step 6), the patients and providers appear on
+the Dashboard, Patients and Providers pages in API mode (step 9) and through the API.
+The Appointments, FHIR Explorer, HL7 Integration and Audit Logs pages still show demo data
+or placeholders; the appointments are available through `GET /appointments`.
+
+You can also create records through the API (see [api.md](api.md)) or by sending synthetic
+HL7 `ADT^A04` messages (see [interoperability.md](interoperability.md)). Use obviously
+fictional names, dates and identifiers, and reserved domains such as `example.org`.
 
 ## 8. Start the backend
 

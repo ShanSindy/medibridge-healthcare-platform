@@ -226,7 +226,7 @@ The roadmap is a proposal and may change. There are no committed dates.
 | 6. PostgreSQL integration testing | In progress |
 
 Follow-up before Phase 2: a supported first-user provisioning command and reproducible
-synthetic demo data.
+synthetic demo data (`seed_demo_data.py`).
 
 **Later phases (proposed)**
 
