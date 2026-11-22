@@ -72,7 +72,7 @@ at the end of a normal run); there is no separate database lifecycle.
 | Module | What it checks | Tests |
 |---|---|---|
 | `test_pg_appointments.py` | Overlap rules from migration 005 through the real routes: identical, partial, containing and contained intervals, back-to-back, other providers, UTC offsets, cancelled and completed appointments, updates | 14 |
-| `test_pg_concurrency.py` | Two transactions competing for the same appointment slot (A commits or rolls back) and the same HL7 control ID | 3 |
+| `test_pg_concurrency.py` | Two transactions competing for the same appointment slot (A commits or rolls back), the same HL7 control ID, and the same MRN under different control IDs | 4 |
 | `test_pg_patient_audit.py` | Patient handlers commit the change and its audit event together, write none for rejected changes, and roll both back on failure | 7 |
 | `test_pg_providers.py` | Provider CRUD round trip; duplicate emails that differ only in case | 2 |
 | `test_pg_fhir_practitioners.py` | Practitioner and PractitionerRole read, search, paging and 404 against real rows | 6 |
@@ -119,10 +119,10 @@ synthetic MRNs and message IDs.
 **Local runs as a superuser.** If `.env.test` allows a superuser, the suite prints a warning;
 CI runs these tests as the non-superuser `medibridge_tester` role.
 
-**Known limitation.** Two concurrent `ADT^A04` messages with the same MRN but different
-control IDs can fail with an unhandled `UniqueViolation` (HTTP 500 or an AE acknowledgment)
-instead of returning `already_exists`; the transaction rolls back cleanly. It is not covered
-by these tests and is planned as a separate correction.
+**HL7 registrations with the same MRN.** `test_pg_concurrency.py` also covers two
+`ADT^A04` messages for the same MRN with different control IDs: the second waits for the
+first and then reports `already_exists` for the first patient, with one patient, one
+identifier and both messages recorded.
 
 ## Coverage
 

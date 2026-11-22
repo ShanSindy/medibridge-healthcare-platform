@@ -78,6 +78,12 @@ the patient change. JSON results:
 Only successfully processed messages are recorded, so a corrected message can be resent
 with the same control ID after a failure. No audit event is written for HL7 processing.
 
+The MRN is unique within MediBridge's MRN system (`unique_patient_identifier` on system and
+value). If two A04 messages for the same MRN with different control IDs are processed at the
+same time, the one that commits second waits for the first and then returns `already_exists`
+for the first patient; its own patient row is rolled back inside a savepoint and its message
+is still recorded. Other database errors are not converted and fail as before.
+
 ### Acknowledgments
 
 When the client sends `Accept: application/hl7-v2`, the response has content type
