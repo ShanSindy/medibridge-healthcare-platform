@@ -1,26 +1,41 @@
 """
-Load a fixed set of synthetic demonstration records into an empty MediBridge database.
+Load a fixed set of synthetic demonstration records into a MediBridge database that an
+operator has deliberately authorized for synthetic demonstrations.
 
-    python seed_demo_data.py --database medibridge_demo --confirm-synthetic-demo
     python seed_demo_data.py --database medibridge_demo --dry-run
+    python seed_demo_data.py --database medibridge_demo --confirm-synthetic-demo
 
 Creates fictional patients (with MRN identifiers), providers and appointments in one
-transaction. It refuses to run unless the patient, provider, appointment and identifier
-tables are all empty, and it never updates or deletes anything. It creates no users,
-passwords or audit events; create users separately with provision_user.py.
+transaction. It never updates or deletes anything and creates no users, passwords or
+audit events; create users separately with provision_user.py.
+
+Target authorization (fail closed). Every condition is checked on the connection that
+seeds, inside the seeding transaction, before any table is locked or written:
+
+- --database equals the configured DB_NAME, the connected current_database(), and is
+  not one of PROTECTED_DATABASES;
+- the connected role equals DB_USER, and the port is the configured one;
+- the database carries the operator's authorization marker: the comment on its public
+  schema is exactly "medibridge-synthetic-demo-target:<database name>:<database OID>".
+  The command never sets this marker. Binding it to the name and OID makes a renamed
+  database, a copy made from it as a template, or a dump restored elsewhere fail the check.
+
+The marker protects against accidental targeting. It is not an access-control system: a
+database owner or superuser can set it on any database.
 
 All records are synthetic. Do not use this tool against a database that holds real data.
 """
 
 import argparse
+import contextlib
 import os
 import sys
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import psycopg
 from psycopg import errors
-
-from database import get_connection
 
 EXIT_SEEDED = 0
 EXIT_UNEXPECTED = 1
@@ -28,14 +43,27 @@ EXIT_INVALID_ARGUMENTS = 2
 EXIT_REFUSED_TARGET = 3
 EXIT_NOT_EMPTY = 4
 EXIT_DATABASE_UNAVAILABLE = 5
+EXIT_OUTCOME_UNKNOWN = 6
 
 MRN_SYSTEM = "https://medibridge.example.org/mrn"
 SEEDED_TABLES = ("patients", "patient_identifiers", "providers", "appointments")
+# Must also be empty: earlier HL7 traffic or audit events would describe records that the
+# demonstration data does not contain. Users and schema_migrations may hold rows.
+REQUIRED_EMPTY_TABLES = (*SEEDED_TABLES, "hl7_messages", "audit_logs")
 PROTECTED_DATABASES = frozenset(
     {"medibridge", "medibridge_test", "medibridge_ci_test", "postgres", "template0", "template1"}
 )
+AUTHORIZATION_PREFIX = "medibridge-synthetic-demo-target:"
 REQUIRED_SETTINGS = ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD")
-LOCK_TIMEOUT = "10s"
+DEFAULT_ENV_FILE = Path(__file__).resolve().with_name(".env")
+DOTENV_DISABLED_VALUES = {"1", "true", "t", "yes", "y"}  # python-dotenv's own rule
+
+# Bounds for this command's own session only; nothing else is reconfigured.
+CONNECT_TIMEOUT_SECONDS = 10
+LOCK_TIMEOUT = "10s"  # waiting for the table locks (another writer or initializer)
+STATEMENT_TIMEOUT = "60s"
+APPLICATION_NAME = "medibridge-seed-demo-data"
+NOT_COMMITTED = "nothing was written (the transaction was not committed)"
 
 # (first name, last name, date of birth, gender); MRNs are DEMO-000001 onwards.
 PATIENTS = (
@@ -129,10 +157,159 @@ class SeedRefused(Exception):
         self.exit_code = exit_code
 
 
-def nonempty_tables(cur) -> list[str]:
+@dataclass(frozen=True)
+class Target:
+    host: str
+    port: str
+    dbname: str
+    user: str
+    password: str = field(repr=False)
+
+
+def safe_text(value) -> str:
+    """For terminal output: control characters are shown escaped, never interpreted."""
+    text = str(value)
+    if text.isprintable():
+        return text
+    return text.encode("unicode_escape").decode("ascii")
+
+
+# --- configuration (no connection) -------------------------------------------------------
+
+
+def load_settings(environ=None, env_file: Path | None = None) -> dict:
+    """Injected settings as given; otherwise the environment, then .env next to this script
+    for names the environment does not set. os.environ is not modified."""
+    if environ is not None:
+        return dict(environ)
+    env_file = DEFAULT_ENV_FILE if env_file is None else env_file
+    values = {}
+    disabled = os.environ.get("PYTHON_DOTENV_DISABLED", "").casefold() in DOTENV_DISABLED_VALUES
+    if not disabled and env_file.is_file():
+        from dotenv import dotenv_values
+
+        values = {k: v for k, v in dotenv_values(env_file).items() if v is not None}
+    values.update(os.environ)
+    return values
+
+
+def resolve_target(database: str, settings) -> Target:
+    missing = [name for name in REQUIRED_SETTINGS if not settings.get(name)]
+    if missing:
+        raise SeedRefused(f"missing database settings: {', '.join(missing)}", EXIT_REFUSED_TARGET)
+    if settings["DB_NAME"] != database:
+        raise SeedRefused(
+            "--database does not match the configured DB_NAME; nothing was changed",
+            EXIT_REFUSED_TARGET,
+        )
+    if database in PROTECTED_DATABASES:
+        raise SeedRefused(
+            f"refusing to seed the protected database {database}", EXIT_REFUSED_TARGET
+        )
+    return Target(
+        host=settings["DB_HOST"],
+        port=str(settings["DB_PORT"]),
+        dbname=settings["DB_NAME"],
+        user=settings["DB_USER"],
+        password=settings["DB_PASSWORD"],
+    )
+
+
+def parse_anchor(value: str) -> datetime:
+    try:
+        anchor = datetime.fromisoformat(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            "the anchor must be an ISO 8601 date and time, e.g. 2031-01-06T00:00:00+00:00"
+        ) from None
+    if anchor.utcoffset() is None:
+        raise argparse.ArgumentTypeError("the anchor must include a UTC offset")
+    return anchor
+
+
+# --- database ----------------------------------------------------------------------------
+
+
+def open_connection(target: Target, *, read_only: bool):
+    """One bounded READ COMMITTED connection; settings apply to this session only."""
+    try:
+        conn = psycopg.connect(
+            host=target.host,
+            port=target.port,
+            dbname=target.dbname,
+            user=target.user,
+            password=target.password,
+            connect_timeout=CONNECT_TIMEOUT_SECONDS,
+            application_name=APPLICATION_NAME,
+            options=f"-c lock_timeout={LOCK_TIMEOUT} -c statement_timeout={STATEMENT_TIMEOUT}",
+        )
+    except psycopg.Error:
+        # The driver's message is not shown: it can echo connection parameters.
+        raise SeedRefused(
+            f"could not connect to {safe_text(target.host)}:{safe_text(target.port)} as "
+            f"{safe_text(target.user)} within {CONNECT_TIMEOUT_SECONDS} s (server unreachable, "
+            f"database missing or authentication failed); {NOT_COMMITTED}",
+            EXIT_DATABASE_UNAVAILABLE,
+        ) from None
+    # The emptiness check after LOCK TABLE must see rows committed by a concurrent
+    # initializer while this one waited: that needs a new snapshot per statement.
+    conn.isolation_level = psycopg.IsolationLevel.READ_COMMITTED
+    conn.read_only = read_only
+    return conn
+
+
+def authorization_marker(database: str, oid: int) -> str:
+    return f"{AUTHORIZATION_PREFIX}{database}:{oid}"
+
+
+def verify_target(conn, target: Target, database: str) -> dict:
+    """Identity and authorization of the session that will seed; refuses on any mismatch."""
+    actual_db, current_user, session_user, oid, marker, isolation = conn.execute(
+        "SELECT current_database(), current_user, session_user, d.oid, "
+        "obj_description(n.oid, 'pg_namespace'), current_setting('transaction_isolation') "
+        "FROM pg_database d, pg_namespace n "
+        "WHERE d.datname = current_database() AND n.nspname = 'public'"
+    ).fetchone()
+    problems = []
+    if not (actual_db == database == target.dbname):
+        problems.append(f"connected database is {safe_text(actual_db)}")
+    if actual_db in PROTECTED_DATABASES:
+        problems.append(f"{safe_text(actual_db)} is protected")
+    if not (current_user == session_user == target.user):
+        problems.append(f"connected role is {safe_text(current_user)}")
+    if str(conn.info.port) != target.port:
+        problems.append(f"connected port is {safe_text(conn.info.port)}")
+    if isolation != "read committed":
+        problems.append(f"transaction isolation is {safe_text(isolation)}, not read committed")
+    if problems:
+        raise SeedRefused(
+            "the connected target does not match the requested one ("
+            + "; ".join(problems)
+            + f"); {NOT_COMMITTED}",
+            EXIT_REFUSED_TARGET,
+        )
+    expected = authorization_marker(actual_db, oid)
+    if marker != expected:
+        if marker and marker.startswith(AUTHORIZATION_PREFIX):
+            reason = (
+                "its synthetic-demo authorization marker names another database "
+                "(renamed, copied or restored?)"
+            )
+        else:
+            reason = "it is not authorized for synthetic demonstration data"
+        raise SeedRefused(
+            f"refusing to seed {safe_text(actual_db)}: {reason}. If this database was created "
+            "for synthetic demonstrations, its owner can authorize it with:\n"
+            f"  COMMENT ON SCHEMA public IS '{expected}';\n{NOT_COMMITTED}",
+            EXIT_REFUSED_TARGET,
+        )
+    return {"database": actual_db, "role": current_user, "oid": oid}
+
+
+def nonempty_tables(cur, tables=REQUIRED_EMPTY_TABLES) -> list[str]:
     found = []
-    for table in SEEDED_TABLES:
-        # Table names come from the fixed SEEDED_TABLES tuple, never from input.
+    for table in tables:
+        # Table names come from fixed module constants, never from input.
         cur.execute(f"SELECT EXISTS (SELECT 1 FROM {table})")  # noqa: S608
         if cur.fetchone()[0]:
             found.append(table)
@@ -141,17 +318,14 @@ def nonempty_tables(cur) -> list[str]:
 
 def seed_in_transaction(conn, anchor: datetime) -> dict:
     """
-    Inserts the dataset using the caller's open transaction; the caller commits.
+    Locks, checks and inserts using the caller's open transaction; the caller commits.
 
     LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE conflicts with itself and with every
-    write, so a second initializer waits here and then finds the tables non-empty.
+    write, so a second initializer waits here (at most the session's lock_timeout) and,
+    under READ COMMITTED, then sees the first one's committed rows and refuses.
     """
     with conn.cursor() as cur:
-        cur.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
-        cur.execute(
-            "LOCK TABLE patients, patient_identifiers, providers, appointments "
-            "IN SHARE ROW EXCLUSIVE MODE"
-        )
+        cur.execute(f"LOCK TABLE {', '.join(REQUIRED_EMPTY_TABLES)} IN SHARE ROW EXCLUSIVE MODE")
         occupied = nonempty_tables(cur)
         if occupied:
             raise SeedRefused(
@@ -189,36 +363,94 @@ def seed_in_transaction(conn, anchor: datetime) -> dict:
     return plan(anchor)
 
 
-def check_target(database: str, environ) -> None:
-    missing = [name for name in REQUIRED_SETTINGS if not environ.get(name)]
-    if missing:
-        raise SeedRefused(f"missing database settings: {', '.join(missing)}", EXIT_REFUSED_TARGET)
-    if environ["DB_NAME"] != database:
-        raise SeedRefused(
-            "--database does not match the configured DB_NAME; nothing was changed",
-            EXIT_REFUSED_TARGET,
+def failure_before_commit(exc: BaseException) -> SeedRefused:
+    """COMMIT was not sent, so PostgreSQL cannot have committed anything."""
+    if isinstance(exc, SeedRefused):
+        return exc
+    if isinstance(exc, KeyboardInterrupt):
+        return SeedRefused(f"interrupted; {NOT_COMMITTED}", EXIT_UNEXPECTED)
+    if isinstance(exc, errors.UndefinedTable):
+        return SeedRefused(
+            f"the schema is missing; run `python migrate.py` first; {NOT_COMMITTED}",
+            EXIT_DATABASE_UNAVAILABLE,
         )
-    if database in PROTECTED_DATABASES:
-        raise SeedRefused(
-            f"refusing to seed the protected database {database}", EXIT_REFUSED_TARGET
+    if isinstance(exc, errors.LockNotAvailable | errors.QueryCanceled):
+        return SeedRefused(
+            "another session is using the tables, or the database did not respond within "
+            f"this command's timeouts; try again later; {NOT_COMMITTED}",
+            EXIT_DATABASE_UNAVAILABLE,
         )
+    if isinstance(exc, psycopg.OperationalError):
+        return SeedRefused(
+            f"the database connection failed; {NOT_COMMITTED}", EXIT_DATABASE_UNAVAILABLE
+        )
+    if isinstance(exc, psycopg.Error):
+        return SeedRefused(
+            f"unexpected database error (SQLSTATE {exc.sqlstate}); {NOT_COMMITTED}",
+            EXIT_UNEXPECTED,
+        )
+    return SeedRefused(f"unexpected error ({type(exc).__name__}); {NOT_COMMITTED}", EXIT_UNEXPECTED)
 
 
-def parse_anchor(value: str) -> datetime:
-    anchor = datetime.fromisoformat(value)
-    if anchor.utcoffset() is None:
-        raise argparse.ArgumentTypeError("the anchor must include a UTC offset")
-    return anchor
+def commit_or_report(conn) -> None:
+    try:
+        conn.commit()
+    except BaseException as exc:
+        if isinstance(exc, psycopg.Error) and exc.sqlstate and not conn.closed:
+            raise SeedRefused(
+                f"the database rejected the commit (SQLSTATE {exc.sqlstate}); {NOT_COMMITTED}",
+                EXIT_UNEXPECTED,
+            ) from None
+        raise SeedRefused(
+            "the outcome of the commit is unknown: the dataset may or may not have been "
+            "written. Do not run the command again until you have checked the patient count "
+            "(docs/getting-started.md, step 7).",
+            EXIT_OUTCOME_UNKNOWN,
+        ) from None
+
+
+def run_seed(target: Target, database: str, anchor: datetime, *, dry_run: bool, out) -> int:
+    conn = open_connection(target, read_only=dry_run)
+    try:
+        try:
+            identity = verify_target(conn, target, database)
+            out.write(
+                f"Verified: database {safe_text(identity['database'])} (OID {identity['oid']}) "
+                f"as {safe_text(identity['role'])}, authorized for synthetic demonstrations.\n"
+            )
+            if dry_run:
+                with conn.cursor() as cur:
+                    occupied = nonempty_tables(cur)
+                state = f"tables not empty: {', '.join(occupied)}" if occupied else "tables empty"
+                out.write(
+                    f"Dry run: {state}; nothing was written. This is advisory only: the tables "
+                    "are checked again, under lock, when seeding.\n"
+                )
+                return EXIT_NOT_EMPTY if occupied else EXIT_SEEDED
+            seed_in_transaction(conn, anchor)
+        except BaseException as exc:
+            with contextlib.suppress(Exception):  # COMMIT was never sent
+                conn.rollback()
+            raise failure_before_commit(exc) from None
+        commit_or_report(conn)
+    finally:
+        conn.close()
+    out.write("Seeded the synthetic dataset; the transaction committed.\n")
+    return EXIT_SEEDED
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python seed_demo_data.py",
-        description="Load synthetic demonstration records into an empty MediBridge database.",
+        description=(
+            "Load synthetic demonstration records into a MediBridge database authorized for "
+            "synthetic demonstrations (see docs/getting-started.md, step 7)."
+        ),
         epilog=(
-            "Exit codes: 0 seeded (or dry run completed), 1 unexpected error, 2 invalid "
-            "arguments, 3 target refused, 4 tables not empty, 5 database unavailable or "
-            "not migrated."
+            "Exit codes: 0 seeded (or dry run found empty tables), 1 unexpected error, "
+            "2 invalid arguments, 3 target refused or not authorized, 4 tables not empty, "
+            "5 database unavailable, busy or not migrated, 6 outcome unknown (check before "
+            "retrying)."
         ),
     )
     parser.add_argument("--database", required=True, help="must equal the configured DB_NAME")
@@ -229,7 +461,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="write the synthetic dataset (required to change anything)",
     )
     mode.add_argument(
-        "--dry-run", action="store_true", help="check the target and show the plan; no writes"
+        "--dry-run",
+        action="store_true",
+        help="check the target and show the plan in a read-only transaction; no writes",
     )
     parser.add_argument(
         "--anchor",
@@ -243,50 +477,19 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None, *, environ=None, out=None) -> int:
     out = out or sys.stdout
     args = build_parser().parse_args(argv)
-    environ = os.environ if environ is None else environ
     anchor = args.anchor or default_anchor()
     try:
-        check_target(args.database, environ)
+        target = resolve_target(args.database, load_settings(environ))
         out.write(
-            f"Target: database {environ['DB_NAME']} on {environ['DB_HOST']}:{environ['DB_PORT']}"
-            f" as {environ['DB_USER']}.\n"
+            f"Target: database {safe_text(target.dbname)} on {safe_text(target.host)}:"
+            f"{safe_text(target.port)} as {safe_text(target.user)}.\n"
         )
-        summary = plan(anchor)
-        out.write(f"Plan: {summary}\n")
-        with get_connection() as conn:
-            if args.dry_run:
-                conn.read_only = True
-                with conn.cursor() as cur:
-                    occupied = nonempty_tables(cur)
-                state = f"tables not empty: {', '.join(occupied)}" if occupied else "tables empty"
-                out.write(f"Dry run: {state}; nothing was written.\n")
-                return EXIT_SEEDED if not occupied else EXIT_NOT_EMPTY
-            seed_in_transaction(conn, anchor)
+        out.write(f"Plan: {plan(anchor)}\n")
+        return run_seed(target, args.database, anchor, dry_run=args.dry_run, out=out)
     except SeedRefused as exc:
         sys.stderr.write(f"Error: {exc}\n")
         return exc.exit_code
-    except (errors.UndefinedTable, errors.LockNotAvailable) as exc:
-        reason = (
-            "the schema is missing; run `python migrate.py` first"
-            if isinstance(exc, errors.UndefinedTable)
-            else "another process is using the tables; try again later"
-        )
-        sys.stderr.write(f"Error: {reason}; nothing was written\n")
-        return EXIT_DATABASE_UNAVAILABLE
-    except psycopg.OperationalError:
-        sys.stderr.write("Error: could not connect to the configured database\n")
-        return EXIT_DATABASE_UNAVAILABLE
-    except psycopg.Error as exc:
-        sys.stderr.write(
-            f"Error: unexpected database error (SQLSTATE {exc.sqlstate}); nothing was written\n"
-        )
-        return EXIT_UNEXPECTED
-    out.write("Seeded the synthetic dataset; the transaction committed.\n")
-    return EXIT_SEEDED
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-
-    load_dotenv()
     sys.exit(main())
