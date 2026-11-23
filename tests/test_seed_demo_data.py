@@ -105,10 +105,14 @@ def authorized(marker):
     return marker()
 
 
-def counts(db):
+def counts(db, schema="public"):
+    """Row counts of the seeded tables, schema-qualified so that a test's shadow schema or
+    altered search_path cannot redirect the check."""
     conn = db()
     return {
-        table: conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608 - fixed names
+        table: conn.execute(
+            sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(schema, table))
+        ).fetchone()[0]
         for table in COUNTS
     }
 
@@ -344,14 +348,16 @@ def test_session_is_bounded_and_read_committed(disposable_database):
         conn.commit()
         row = conn.execute(
             "SELECT current_setting('lock_timeout'), current_setting('statement_timeout'), "
-            "current_setting('application_name'), current_setting('transaction_isolation')"
+            "current_setting('application_name'), current_setting('transaction_isolation'), "
+            "current_setting('transaction_read_only'), current_setting('search_path')"
         ).fetchone()
         connect_timeout = conn.info.get_parameters().get("connect_timeout")
     finally:
         conn.close()
 
     # The connection asks for READ COMMITTED explicitly, whatever the session default.
-    assert row == ("10s", "1min", "medibridge-seed-demo-data", "read committed")  # 60s
+    assert row[:5] == ("10s", "1min", "medibridge-seed-demo-data", "read committed", "off")
+    assert [part.strip() for part in row[5].split(",")] == ["pg_catalog", "public", "pg_temp"]
     assert connect_timeout == str(seed_demo_data.CONNECT_TIMEOUT_SECONDS)
 
 
@@ -375,48 +381,60 @@ def test_isolation_other_than_read_committed_is_refused(
 
 
 class FakeIdentityConnection:
-    """Returns a fixed identity row; enough for verify_target without a database."""
+    """Returns a fixed identity row (fetchone) and a fixed list of same-named tables in other
+    schemas (fetchall); enough for verify_target without a database."""
 
-    def __init__(self, row, port=5432):
-        self.row = row
+    def __init__(self, row, port=5432, elsewhere=()):
+        self.row, self.elsewhere = row, list(elsewhere)
         self.info = type("Info", (), {"port": port})()
 
-    def execute(self, query):
-        row = self.row
-        return type("Result", (), {"fetchone": staticmethod(lambda: row)})()
+    def execute(self, query, params=None):
+        row, elsewhere = self.row, self.elsewhere
+        return type(
+            "Result",
+            (),
+            {"fetchone": staticmethod(lambda: row), "fetchall": staticmethod(lambda: elsewhere)},
+        )()
 
 
 DEMO_TARGET = seed_demo_data.Target(
     "db.example.internal", "5432", "medibridge_demo", "operator", "x"
 )
 DEMO_MARKER = seed_demo_data.authorization_marker("medibridge_demo", 4242)
+PINNED_SEARCH_PATH = "pg_catalog, public, pg_temp"  # as PostgreSQL reports the pinned value
+
+
+def identity_row(
+    database="medibridge_demo",
+    user="operator",
+    session_user="operator",
+    oid=4242,
+    marker=DEMO_MARKER,
+    isolation="read committed",
+    read_only="off",
+    search_path=PINNED_SEARCH_PATH,
+):
+    return (database, user, session_user, oid, marker, isolation, read_only, search_path)
 
 
 @pytest.mark.parametrize(
     ("row", "port", "problem"),
     [
-        (
-            ("medibridge_demo", "other", "other", 4242, DEMO_MARKER, "read committed"),
-            5432,
-            "connected role is other",
-        ),
-        (
-            ("medibridge_demo", "operator", "admin", 4242, DEMO_MARKER, "read committed"),
-            5432,
-            "connected role is operator",
-        ),
-        (
-            ("medibridge_demo", "operator", "operator", 4242, DEMO_MARKER, "read committed"),
-            6543,
-            "connected port is 6543",
-        ),
-        (
-            ("postgres", "operator", "operator", 5, DEMO_MARKER, "read committed"),
-            5432,
-            "postgres is protected",
-        ),
+        (identity_row(user="other", session_user="other"), 5432, "connected role is other"),
+        (identity_row(session_user="admin"), 5432, "connected role is operator"),
+        (identity_row(), 6543, "connected port is 6543"),
+        (identity_row(database="postgres", oid=5), 5432, "postgres is protected"),
+        (identity_row(read_only="on"), 5432, "transaction_read_only is on, not off"),
+        (identity_row(search_path='"$user", public'), 5432, 'search_path is "$user", public'),
     ],
-    ids=["role", "session-role", "port", "protected-connected-database"],
+    ids=[
+        "role",
+        "session-role",
+        "port",
+        "protected-connected-database",
+        "read-only-when-seeding",
+        "search-path",
+    ],
 )
 def test_connected_identity_mismatches_are_refused(row, port, problem):
     with pytest.raises(seed_demo_data.SeedRefused) as raised:
@@ -427,12 +445,71 @@ def test_connected_identity_mismatches_are_refused(row, port, problem):
     assert problem in str(raised.value)
 
 
+def test_dry_run_requires_a_read_only_transaction():
+    with pytest.raises(seed_demo_data.SeedRefused) as raised:
+        seed_demo_data.verify_target(
+            FakeIdentityConnection(identity_row(read_only="off")),
+            DEMO_TARGET,
+            "medibridge_demo",
+            read_only=True,
+        )
+    assert raised.value.exit_code == seed_demo_data.EXIT_REFUSED_TARGET
+    assert "transaction_read_only is off, not on" in str(raised.value)
+
+
+def test_same_named_tables_in_other_schemas_are_refused():
+    conn = FakeIdentityConnection(identity_row(), elsewhere=[("operator", "patients")])
+    with pytest.raises(seed_demo_data.SeedRefused) as raised:
+        seed_demo_data.verify_target(conn, DEMO_TARGET, "medibridge_demo")
+    assert raised.value.exit_code == seed_demo_data.EXIT_REFUSED_TARGET
+    assert "outside the public schema (operator.patients)" in str(raised.value)
+
+
 def test_matching_identity_and_marker_are_accepted():
-    row = ("medibridge_demo", "operator", "operator", 4242, DEMO_MARKER, "read committed")
-    identity = seed_demo_data.verify_target(
-        FakeIdentityConnection(row), DEMO_TARGET, "medibridge_demo"
-    )
-    assert identity == {"database": "medibridge_demo", "role": "operator", "oid": 4242}
+    for read_only in ("off", "on"):
+        identity = seed_demo_data.verify_target(
+            FakeIdentityConnection(identity_row(read_only=read_only)),
+            DEMO_TARGET,
+            "medibridge_demo",
+            read_only=read_only == "on",
+        )
+        assert identity == {"database": "medibridge_demo", "role": "operator", "oid": 4242}
+
+
+@pytest.mark.parametrize(
+    ("marker", "statement"),
+    [
+        (
+            "medibridge-synthetic-demo-target:demo:7",
+            "COMMENT ON SCHEMA public IS 'medibridge-synthetic-demo-target:demo:7';",
+        ),
+        (
+            "medibridge-synthetic-demo-target:o'brien_demo:7",
+            "COMMENT ON SCHEMA public IS 'medibridge-synthetic-demo-target:o''brien_demo:7';",
+        ),
+        (
+            "medibridge-synthetic-demo-target:a\\'b:7",
+            "COMMENT ON SCHEMA public IS E'medibridge-synthetic-demo-target:a\\\\''b:7';",
+        ),
+    ],
+    ids=["plain", "apostrophe", "backslash-and-apostrophe"],
+)
+def test_authorization_statement_quotes_the_marker(marker, statement):
+    assert seed_demo_data.authorization_statement(marker) == statement
+
+
+def test_refusal_prints_a_quoted_statement_with_control_characters_escaped():
+    name = "o'brien\x1b[2J_demo"
+    target = dataclasses.replace(DEMO_TARGET, dbname=name)
+    conn = FakeIdentityConnection(identity_row(database=name, marker=None))
+
+    with pytest.raises(seed_demo_data.SeedRefused) as raised:
+        seed_demo_data.verify_target(conn, target, name)
+
+    message = str(raised.value)
+    assert "\x1b" not in message
+    assert "o''brien\\x1b[2J_demo:4242" in message
+    assert raised.value.exit_code == seed_demo_data.EXIT_REFUSED_TARGET
 
 
 def test_target_line_escapes_control_characters(monkeypatch, capsys):
@@ -459,8 +536,13 @@ def test_target_line_escapes_control_characters(monkeypatch, capsys):
             "connection failed",
         ),
         (RuntimeError("boom"), seed_demo_data.EXIT_UNEXPECTED, "unexpected error (RuntimeError)"),
+        (
+            errors.InsufficientPrivilege("permission denied for table hl7_messages"),
+            seed_demo_data.EXIT_REFUSED_TARGET,
+            "run the command as the role that owns the MediBridge tables",
+        ),
     ],
-    ids=["interrupt", "connection-lost", "python-error"],
+    ids=["interrupt", "connection-lost", "python-error", "insufficient-privilege"],
 )
 def test_failures_before_commit_are_reported_as_not_committed(exc, expected, message):
     refused = seed_demo_data.failure_before_commit(exc)
@@ -509,6 +591,158 @@ def test_dry_run_and_seed_refuse_existing_records(disposable_database, db, autho
     assert dry == code == seed_demo_data.EXIT_NOT_EMPTY
     assert f"tables not empty: {table}" in dry_output
     assert counts(db) == before
+
+
+def seed_target(disposable_database):
+    return seed_demo_data.resolve_target(
+        disposable_database.name, seed_demo_data.load_settings(os.environ)
+    )
+
+
+def test_dry_run_session_is_read_only_and_rejects_writes(disposable_database, db, authorized):
+    """The dry run's real session: PostgreSQL reports transaction_read_only = on after the
+    target checks, and a write on that same transaction fails with SQLSTATE 25006."""
+    conn = seed_demo_data.open_connection(seed_target(disposable_database), read_only=True)
+    try:
+        seed_demo_data.verify_target(
+            conn, seed_target(disposable_database), disposable_database.name, read_only=True
+        )
+        assert conn.execute("SELECT current_setting('transaction_read_only')").fetchone() == ("on",)
+        with pytest.raises(errors.ReadOnlySqlTransaction) as raised:
+            conn.execute(
+                "INSERT INTO public.providers (first_name, last_name, specialty) "
+                "VALUES ('Read', 'Only', 'Cardiology')"
+            )
+        assert raised.value.sqlstate == "25006"
+        conn.rollback()
+    finally:
+        conn.close()
+
+    assert counts(db) == dict.fromkeys(COUNTS, 0)
+
+
+def test_dry_run_command_checks_inside_a_read_only_transaction(
+    disposable_database, db, authorized, monkeypatch
+):
+    seen = []
+    real_nonempty = seed_demo_data.nonempty_tables
+
+    def recording_nonempty(cur, tables=None):
+        seen.append(cur.connection.execute("SHOW transaction_read_only").fetchone()[0])
+        return real_nonempty(cur, tables)
+
+    monkeypatch.setattr(seed_demo_data, "nonempty_tables", recording_nonempty)
+
+    code, _ = run(disposable_database.name, "--dry-run")
+
+    assert code == seed_demo_data.EXIT_SEEDED
+    assert seen == ["on"]
+    assert counts(db) == dict.fromkeys(COUNTS, 0)
+
+
+@pytest.mark.parametrize("name_part", ["o'brien", "back\\slash"], ids=["apostrophe", "backslash"])
+def test_printed_authorization_statement_runs_and_sets_the_exact_marker(
+    disposable_database, db, marker, name_part
+):
+    """The printed statement is valid SQL that stores the value byte for byte (run on the
+    disposable database; the marker fixture restores the previous comment)."""
+    value = seed_demo_data.authorization_marker(f"synthetic_{name_part}", marker.oid)
+    conn = db()
+    conn.execute(seed_demo_data.authorization_statement(value))
+    stored = conn.execute("SELECT obj_description('public'::regnamespace, 'pg_namespace')")
+    assert stored.fetchone()[0] == value
+
+
+@contextlib.contextmanager
+def other_schema(db, name, *, with_table):
+    """A schema in the disposable database, dropped again before the test's own cleanup
+    (which refuses tables outside public)."""
+    conn = db()
+    conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(name)))
+    try:
+        if with_table:
+            conn.execute(
+                sql.SQL("CREATE TABLE {} (LIKE public.patients INCLUDING ALL)").format(
+                    sql.Identifier(name, "patients")
+                )
+            )
+        yield
+    finally:
+        conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(name)))
+
+
+def test_shadow_schema_named_after_the_role_is_refused(disposable_database, db, authorized, capsys):
+    """With the default search_path ("$user", public), a schema named after the role would
+    shadow public. The command refuses instead of checking one schema and writing another."""
+    role = db().execute("SELECT current_user").fetchone()[0]
+    with other_schema(db, role, with_table=True):
+        dry, _ = run(disposable_database.name, "--dry-run")
+        code, _ = run(disposable_database.name, "--confirm-synthetic-demo")
+        shadow_rows = (
+            db()
+            .execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(role, "patients")))
+            .fetchone()[0]
+        )
+
+    assert dry == code == seed_demo_data.EXIT_REFUSED_TARGET
+    assert f"outside the public schema ({role}.patients)" in capsys.readouterr().err
+    assert shadow_rows == 0
+    assert counts(db) == dict.fromkeys(COUNTS, 0)
+
+
+def test_altered_database_search_path_cannot_redirect_the_seed(disposable_database, db, authorized):
+    """The disposable database's default search_path points elsewhere; the command's session
+    still uses the pinned path and writes only to public."""
+    database = sql.Identifier(disposable_database.name)
+    conn = db()
+    with other_schema(db, "synthetic_redirect", with_table=False):
+        conn.execute(
+            sql.SQL("ALTER DATABASE {} SET search_path = synthetic_redirect").format(database)
+        )
+        try:
+            assert db().execute("SHOW search_path").fetchone()[0] == "synthetic_redirect"
+            code, output = run(disposable_database.name, "--confirm-synthetic-demo")
+        finally:
+            conn.execute(sql.SQL("ALTER DATABASE {} RESET search_path").format(database))
+
+    assert code == seed_demo_data.EXIT_SEEDED, output
+    assert counts(db) == COUNTS
+
+
+def test_seed_runs_as_a_non_superuser_table_owner(
+    disposable_database, db, authorized, test_database_config
+):
+    """
+    In the standard test environment (CI's LOGIN CREATEDB role) the command's own session is
+    not a superuser, owns the database and every checked table, and still seeds; the marker
+    was set by that same role (the `authorized` fixture). Skipped only under the explicit
+    local TEST_DB_ALLOW_SUPERUSER=1 override.
+    """
+    conn = seed_demo_data.open_connection(seed_target(disposable_database), read_only=False)
+    try:
+        is_superuser, owns_database, not_owned = conn.execute(
+            "SELECT r.rolsuper, d.datdba = r.oid, "
+            "ARRAY(SELECT c.relname FROM pg_class c "
+            "      WHERE c.relnamespace = 'public'::regnamespace AND c.relname = ANY(%s) "
+            "      AND c.relowner <> r.oid ORDER BY 1) "
+            "FROM pg_roles r, pg_database d "
+            "WHERE r.rolname = current_user AND d.datname = current_database()",
+            (list(seed_demo_data.REQUIRED_EMPTY_TABLES),),
+        ).fetchone()
+        conn.rollback()
+    finally:
+        conn.close()
+
+    if is_superuser:
+        assert test_database_config.allow_superuser, "superuser without the explicit override"
+        pytest.skip("running as a superuser under the explicit TEST_DB_ALLOW_SUPERUSER override")
+    assert owns_database
+    assert not_owned == []
+
+    code, output = run(disposable_database.name, "--confirm-synthetic-demo")
+
+    assert code == seed_demo_data.EXIT_SEEDED, output
+    assert counts(db) == COUNTS
 
 
 # --- real seeding ------------------------------------------------------------------------
@@ -692,16 +926,29 @@ def test_commit_outcome_is_reported_honestly(
 # --- concurrent initializer ---------------------------------------------------------------
 
 
-def test_concurrent_initializer_waits_and_then_refuses(
-    disposable_database, db, authorized, monkeypatch
-):
+# A must outlive B's whole wait (connect timeout + lock timeout), so that A's locks can only
+# be released by this test, never by the server while B is still waiting.
+RACE_HOLDER_IDLE_LIMIT = "45s"
+RACE_JOIN_SECONDS = 90
+
+
+class ControlledFailure(Exception):
+    """Raised by the failure probe at the moment B is waiting for A's locks."""
+
+
+def race_initializers(disposable_database, db, monkeypatch, *, observe_seconds, fail_while_waiting):
     """
     A seeds inside an open transaction (holding the table locks). B is the real command in
     a worker thread. B is observed (pg_blocking_pids) waiting for A on LOCK TABLE; A then
     commits and B, reading under READ COMMITTED after the lock, finds the rows and refuses.
 
-    Bounds: B has the command's own 10 s lock and 60 s statement timeouts; A's session is
-    ended by the server after HOLDER_IDLE_LIMIT idle; the worker is joined for at most 90 s.
+    Failure path: if anything fails before A commits, B is joined first, while A still holds
+    its locks, so B can only give up at its lock timeout and write nothing. A is rolled back
+    only afterwards. (Rolling A back first would let a still-waiting B seed the database.)
+
+    Bounds: B has the command's own lock and statement timeouts; A's session is ended by the
+    server after RACE_HOLDER_IDLE_LIMIT idle; the worker is joined for at most
+    RACE_JOIN_SECONDS at a time.
     """
     opened = queue.Queue()
     real_open = seed_demo_data.open_connection
@@ -720,13 +967,14 @@ def test_concurrent_initializer_waits_and_then_refuses(
         name="seed-race-worker",
     )
     evidence = {}
+    a_committed = False
     try:
-        a.execute(f"SET idle_in_transaction_session_timeout = '{HOLDER_IDLE_LIMIT}'")
+        a.execute(f"SET idle_in_transaction_session_timeout = '{RACE_HOLDER_IDLE_LIMIT}'")
         a.commit()
         seed_demo_data.seed_in_transaction(a, datetime(2031, 1, 6, tzinfo=UTC))
         thread.start()
         b_pid = opened.get(timeout=15)
-        deadline = time.monotonic() + 8  # well inside B's 10 s lock timeout
+        deadline = time.monotonic() + observe_seconds
         while True:
             row = observer.execute(
                 "SELECT pg_blocking_pids(pid), wait_event_type, query FROM pg_stat_activity "
@@ -738,16 +986,49 @@ def test_concurrent_initializer_waits_and_then_refuses(
                 break
             assert time.monotonic() < deadline, f"B was not observed waiting for A: {row}"
             time.sleep(0.05)
+        if fail_while_waiting:
+            raise ControlledFailure("failure while B waits for A's locks")
         a.commit()
+        a_committed = True
     finally:
+        if not a_committed and thread.ident is not None:
+            thread.join(RACE_JOIN_SECONDS)  # A still holds the locks: B can only time out
         with contextlib.suppress(psycopg.Error):
             a.rollback()
         a.close()
         if thread.ident is not None:
-            thread.join(90)
-    assert not thread.is_alive(), "worker still running after 90 s"
+            thread.join(RACE_JOIN_SECONDS)
+        assert not thread.is_alive(), f"worker still running after {RACE_JOIN_SECONDS} s"
+    return results.get_nowait(), evidence
 
-    code, _ = results.get_nowait()
+
+def test_concurrent_initializer_waits_and_then_refuses(
+    disposable_database, db, authorized, monkeypatch
+):
+    (code, _), evidence = race_initializers(
+        disposable_database,
+        db,
+        monkeypatch,
+        observe_seconds=8,  # well inside B's 10 s lock timeout
+        fail_while_waiting=False,
+    )
+
     assert evidence["query"].upper().startswith("LOCK TABLE")
     assert code == seed_demo_data.EXIT_NOT_EMPTY
     assert counts(db) == COUNTS
+
+
+def test_failure_while_initializer_waits_lets_it_commit_nothing(
+    disposable_database, db, authorized, monkeypatch, capsys
+):
+    """Controlled failure probe of the race's failure path: the test fails while B is
+    waiting. B must then time out against A's still-held locks, and A must roll back, so
+    the disposable database stays empty."""
+    monkeypatch.setattr(seed_demo_data, "LOCK_TIMEOUT", "3s")
+    with pytest.raises(ControlledFailure):
+        race_initializers(
+            disposable_database, db, monkeypatch, observe_seconds=2.5, fail_while_waiting=True
+        )
+
+    assert "another session is using the tables" in capsys.readouterr().err
+    assert counts(db) == dict.fromkeys(COUNTS, 0)

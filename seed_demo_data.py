@@ -15,13 +15,27 @@ seeds, inside the seeding transaction, before any table is locked or written:
 - --database equals the configured DB_NAME, the connected current_database(), and is
   not one of PROTECTED_DATABASES;
 - the connected role equals DB_USER, and the port is the configured one;
+- the session is READ COMMITTED, read-only exactly when --dry-run is given, and uses the
+  pinned search_path; no table with a seeded or checked name exists outside "public";
 - the database carries the operator's authorization marker: the comment on its public
   schema is exactly "medibridge-synthetic-demo-target:<database name>:<database OID>".
-  The command never sets this marker. Binding it to the name and OID makes a renamed
-  database, a copy made from it as a template, or a dump restored elsewhere fail the check.
+  The command never sets this marker.
+
+The marker authorizes the "public" schema, and every statement names its tables as
+public.<table>, so the schema that is checked is the schema that is written.
+
+Binding the marker to the name and OID makes a renamed database, and a copy made from it as
+a template in the same cluster, fail the check. OIDs are only unique within one cluster, so
+this is not a guarantee for copies: a physical copy (base backup, point-in-time restore,
+promoted replica, disk snapshot, pg_upgrade) keeps the name, OID and comment, and a restore
+into another cluster can receive the same OID. There, the empty-table check is what remains.
 
 The marker protects against accidental targeting. It is not an access-control system: a
 database owner or superuser can set it on any database.
+
+Required privileges: run as the role that owns the MediBridge tables (the role that ran
+migrate.py). LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE needs UPDATE, DELETE or TRUNCATE on
+all six checked tables, which a role with only INSERT and SELECT does not have.
 
 All records are synthetic. Do not use this tool against a database that holds real data.
 """
@@ -35,7 +49,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
-from psycopg import errors
+from psycopg import errors, sql
 
 EXIT_SEEDED = 0
 EXIT_UNEXPECTED = 1
@@ -54,6 +68,10 @@ PROTECTED_DATABASES = frozenset(
     {"medibridge", "medibridge_test", "medibridge_ci_test", "postgres", "template0", "template1"}
 )
 AUTHORIZATION_PREFIX = "medibridge-synthetic-demo-target:"
+# The schema the marker authorizes and every statement writes to.
+SCHEMA = "public"
+# pg_temp is listed last so that a temporary table cannot shadow a schema table.
+SEARCH_PATH = f"pg_catalog,{SCHEMA},pg_temp"
 REQUIRED_SETTINGS = ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD")
 DEFAULT_ENV_FILE = Path(__file__).resolve().with_name(".env")
 DOTENV_DISABLED_VALUES = {"1", "true", "t", "yes", "y"}  # python-dotenv's own rule
@@ -241,7 +259,10 @@ def open_connection(target: Target, *, read_only: bool):
             password=target.password,
             connect_timeout=CONNECT_TIMEOUT_SECONDS,
             application_name=APPLICATION_NAME,
-            options=f"-c lock_timeout={LOCK_TIMEOUT} -c statement_timeout={STATEMENT_TIMEOUT}",
+            options=(
+                f"-c lock_timeout={LOCK_TIMEOUT} -c statement_timeout={STATEMENT_TIMEOUT} "
+                f"-c search_path={SEARCH_PATH}"
+            ),
         )
     except psycopg.Error:
         # The driver's message is not shown: it can echo connection parameters.
@@ -262,13 +283,55 @@ def authorization_marker(database: str, oid: int) -> str:
     return f"{AUTHORIZATION_PREFIX}{database}:{oid}"
 
 
-def verify_target(conn, target: Target, database: str) -> dict:
+def authorization_statement(marker: str) -> str:
+    """
+    The statement an owner runs to authorize the database, with the marker as a correctly
+    quoted SQL string literal: quotes are doubled, and a value containing a backslash is
+    written as an E'' literal, which reads the same whatever standard_conforming_strings is.
+    """
+    literal = marker.replace("'", "''")
+    prefix = ""
+    if "\\" in marker:
+        prefix, literal = "E", literal.replace("\\", "\\\\")
+    return f"COMMENT ON SCHEMA {SCHEMA} IS {prefix}'{literal}';"
+
+
+def table(name: str) -> sql.Identifier:
+    """public.<name>, quoted: every statement names the schema that the marker authorizes."""
+    return sql.Identifier(SCHEMA, name)
+
+
+# Relations (not indexes or sequences) whose names match the checked tables but which live
+# in another persistent schema. Temporary tables are excluded: they belong to one session
+# and, with pg_temp last in this session's search_path, cannot shadow ours.
+OTHER_SCHEMA_TABLES = (
+    "SELECT n.nspname, c.relname FROM pg_class c "
+    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE c.relname = ANY(%s) AND n.nspname <> %s AND c.relpersistence <> 't' "
+    "AND c.relkind IN ('r', 'p', 'v', 'm', 'f') "
+    "AND n.nspname NOT IN ('pg_catalog', 'information_schema') "
+    "ORDER BY n.nspname, c.relname"
+)
+
+
+def verify_target(conn, target: Target, database: str, *, read_only: bool = False) -> dict:
     """Identity and authorization of the session that will seed; refuses on any mismatch."""
-    actual_db, current_user, session_user, oid, marker, isolation = conn.execute(
+    (
+        actual_db,
+        current_user,
+        session_user,
+        oid,
+        marker,
+        isolation,
+        transaction_read_only,
+        search_path,
+    ) = conn.execute(
         "SELECT current_database(), current_user, session_user, d.oid, "
-        "obj_description(n.oid, 'pg_namespace'), current_setting('transaction_isolation') "
+        "obj_description(n.oid, 'pg_namespace'), current_setting('transaction_isolation'), "
+        "current_setting('transaction_read_only'), current_setting('search_path') "
         "FROM pg_database d, pg_namespace n "
-        "WHERE d.datname = current_database() AND n.nspname = 'public'"
+        "WHERE d.datname = current_database() AND n.nspname = %s",
+        (SCHEMA,),
     ).fetchone()
     problems = []
     if not (actual_db == database == target.dbname):
@@ -281,11 +344,27 @@ def verify_target(conn, target: Target, database: str) -> dict:
         problems.append(f"connected port is {safe_text(conn.info.port)}")
     if isolation != "read committed":
         problems.append(f"transaction isolation is {safe_text(isolation)}, not read committed")
+    expected_read_only = "on" if read_only else "off"
+    if transaction_read_only != expected_read_only:
+        problems.append(
+            f"transaction_read_only is {safe_text(transaction_read_only)}, not {expected_read_only}"
+        )
+    if [part.strip() for part in search_path.split(",")] != SEARCH_PATH.split(","):
+        problems.append(f"search_path is {safe_text(search_path)}, not {SEARCH_PATH}")
     if problems:
         raise SeedRefused(
             "the connected target does not match the requested one ("
             + "; ".join(problems)
             + f"); {NOT_COMMITTED}",
+            EXIT_REFUSED_TARGET,
+        )
+    elsewhere = conn.execute(OTHER_SCHEMA_TABLES, (list(REQUIRED_EMPTY_TABLES), SCHEMA)).fetchall()
+    if elsewhere:
+        names = ", ".join(safe_text(f"{schema}.{name}") for schema, name in elsewhere)
+        raise SeedRefused(
+            f"refusing to seed {safe_text(actual_db)}: tables with MediBridge's names also "
+            f"exist outside the {SCHEMA} schema ({names}). The authorization covers only "
+            f"{SCHEMA}, and the application could read the other tables; {NOT_COMMITTED}",
             EXIT_REFUSED_TARGET,
         )
     expected = authorization_marker(actual_db, oid)
@@ -300,19 +379,18 @@ def verify_target(conn, target: Target, database: str) -> dict:
         raise SeedRefused(
             f"refusing to seed {safe_text(actual_db)}: {reason}. If this database was created "
             "for synthetic demonstrations, its owner can authorize it with:\n"
-            f"  COMMENT ON SCHEMA public IS '{expected}';\n{NOT_COMMITTED}",
+            f"  {safe_text(authorization_statement(expected))}\n{NOT_COMMITTED}",
             EXIT_REFUSED_TARGET,
         )
     return {"database": actual_db, "role": current_user, "oid": oid}
 
 
-def nonempty_tables(cur, tables=REQUIRED_EMPTY_TABLES) -> list[str]:
+def nonempty_tables(cur, tables=None) -> list[str]:
     found = []
-    for table in tables:
-        # Table names come from fixed module constants, never from input.
-        cur.execute(f"SELECT EXISTS (SELECT 1 FROM {table})")  # noqa: S608
+    for name in REQUIRED_EMPTY_TABLES if tables is None else tables:
+        cur.execute(sql.SQL("SELECT EXISTS (SELECT 1 FROM {})").format(table(name)))
         if cur.fetchone()[0]:
-            found.append(table)
+            found.append(name)
     return found
 
 
@@ -324,8 +402,27 @@ def seed_in_transaction(conn, anchor: datetime) -> dict:
     write, so a second initializer waits here (at most the session's lock_timeout) and,
     under READ COMMITTED, then sees the first one's committed rows and refuses.
     """
+    insert_patient = sql.SQL(
+        "INSERT INTO {} (first_name, last_name, date_of_birth, gender) "
+        "VALUES (%s, %s, %s, %s) RETURNING id"
+    ).format(table("patients"))
+    insert_identifier = sql.SQL(
+        "INSERT INTO {} (patient_id, system, value) VALUES (%s, %s, %s)"
+    ).format(table("patient_identifiers"))
+    insert_provider = sql.SQL(
+        "INSERT INTO {} (first_name, last_name, specialty, email, phone) "
+        "VALUES (%s, %s, %s, %s, %s) RETURNING id"
+    ).format(table("providers"))
+    insert_appointment = sql.SQL(
+        "INSERT INTO {} (patient_id, provider_id, starts_at, ends_at, status, reason) "
+        "VALUES (%s, %s, %s, %s, %s, %s)"
+    ).format(table("appointments"))
     with conn.cursor() as cur:
-        cur.execute(f"LOCK TABLE {', '.join(REQUIRED_EMPTY_TABLES)} IN SHARE ROW EXCLUSIVE MODE")
+        cur.execute(
+            sql.SQL("LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE").format(
+                sql.SQL(", ").join(table(name) for name in REQUIRED_EMPTY_TABLES)
+            )
+        )
         occupied = nonempty_tables(cur)
         if occupied:
             raise SeedRefused(
@@ -334,30 +431,17 @@ def seed_in_transaction(conn, anchor: datetime) -> dict:
             )
         patient_ids = []
         for number, (first, last, born, gender) in enumerate(PATIENTS, start=1):
-            cur.execute(
-                "INSERT INTO patients (first_name, last_name, date_of_birth, gender) "
-                "VALUES (%s, %s, %s, %s) RETURNING id",
-                (first, last, born, gender),
-            )
+            cur.execute(insert_patient, (first, last, born, gender))
             patient_id = cur.fetchone()[0]
             patient_ids.append(patient_id)
-            cur.execute(
-                "INSERT INTO patient_identifiers (patient_id, system, value) VALUES (%s, %s, %s)",
-                (patient_id, MRN_SYSTEM, f"DEMO-{number:06d}"),
-            )
+            cur.execute(insert_identifier, (patient_id, MRN_SYSTEM, f"DEMO-{number:06d}"))
         provider_ids = []
         for first, last, specialty, email, phone in PROVIDERS:
-            cur.execute(
-                "INSERT INTO providers (first_name, last_name, specialty, email, phone) "
-                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (first, last, specialty, email, phone),
-            )
+            cur.execute(insert_provider, (first, last, specialty, email, phone))
             provider_ids.append(cur.fetchone()[0])
         for patient, provider, starts_at, ends_at, status, reason in appointment_rows(anchor):
             cur.execute(
-                "INSERT INTO appointments "
-                "(patient_id, provider_id, starts_at, ends_at, status, reason) "
-                "VALUES (%s, %s, %s, %s, %s, %s)",
+                insert_appointment,
                 (patient_ids[patient], provider_ids[provider], starts_at, ends_at, status, reason),
             )
     return plan(anchor)
@@ -373,6 +457,12 @@ def failure_before_commit(exc: BaseException) -> SeedRefused:
         return SeedRefused(
             f"the schema is missing; run `python migrate.py` first; {NOT_COMMITTED}",
             EXIT_DATABASE_UNAVAILABLE,
+        )
+    if isinstance(exc, errors.InsufficientPrivilege):
+        return SeedRefused(
+            "permission denied (SQLSTATE 42501): run the command as the role that owns the "
+            f"MediBridge tables (the role that ran migrate.py); {NOT_COMMITTED}",
+            EXIT_REFUSED_TARGET,
         )
     if isinstance(exc, errors.LockNotAvailable | errors.QueryCanceled):
         return SeedRefused(
@@ -413,7 +503,7 @@ def run_seed(target: Target, database: str, anchor: datetime, *, dry_run: bool, 
     conn = open_connection(target, read_only=dry_run)
     try:
         try:
-            identity = verify_target(conn, target, database)
+            identity = verify_target(conn, target, database, read_only=dry_run)
             out.write(
                 f"Verified: database {safe_text(identity['database'])} (OID {identity['oid']}) "
                 f"as {safe_text(identity['role'])}, authorized for synthetic demonstrations.\n"
@@ -448,7 +538,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         epilog=(
             "Exit codes: 0 seeded (or dry run found empty tables), 1 unexpected error, "
-            "2 invalid arguments, 3 target refused or not authorized, 4 tables not empty, "
+            "2 invalid arguments, 3 target refused, not authorized or insufficient privileges, "
+            "4 tables not empty, "
             "5 database unavailable, busy or not migrated, 6 outcome unknown (check before "
             "retrying)."
         ),
