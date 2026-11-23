@@ -113,6 +113,7 @@ def observe_worker_connection(monkeypatch, module, disposable_database):
             ).fetchone()
             seen["lock_timeout"] = conn.execute("SHOW lock_timeout").fetchone()[0]
             seen["statement_timeout"] = conn.execute("SHOW statement_timeout").fetchone()[0]
+            seen["isolation"] = conn.execute("SHOW transaction_isolation").fetchone()[0]
             conn.rollback()  # leave the real service code a fresh transaction
         except BaseException:
             conn.close()
@@ -156,6 +157,7 @@ def run_race(connect, seen, hold, operation, finish, disposable_database):
             b_pid=b_pid,
             b_lock_timeout=seen["lock_timeout"],
             b_statement_timeout=seen["statement_timeout"],
+            b_isolation=seen["isolation"],
         )
         assert b_pid != a_pid
         while True:
@@ -282,6 +284,7 @@ def assert_blocking_evidence(evidence, statement_prefix, record_property):
                 "blocked_by",
                 "b_lock_timeout",
                 "b_statement_timeout",
+                "b_isolation",
                 "b_closed",
             )
         },
@@ -453,3 +456,163 @@ def test_duplicate_hl7_control_id_waits_and_is_reported_as_duplicate(
         ("SYN-CONC-123",),
     ).fetchone()
     assert counts == (1, 1, 1)
+
+
+# --- HL7 same MRN, different control IDs ----------------------------------------------
+
+# The recovery in hl7_service re-reads the MRN after the savepoint rollback and relies on
+# READ COMMITTED to see the winner. These tests assert that B really ran at that level.
+EXPECTED_ISOLATION = "read committed"
+
+
+def registration(control_id, mrn):
+    return (
+        f"MSH|^~\\&|SYN_CONC|SYN_FAC|MEDIBRIDGE|MEDIBRIDGE|20311106120000||ADT^A04|{control_id}|P|2.5\r"
+        "EVN|A04|20311106120000\r"
+        f"PID|1||{mrn}^^^SYN_FAC^MR||Concurrent^Morgan||19880412|F"
+    )
+
+
+def hold_first_registration(held, control_id, mrn):
+    """A's uncommitted writes for a first ADT^A04: tracking row, patient, MRN identifier."""
+
+    def hold(cursor):
+        cursor.execute(
+            "INSERT INTO hl7_messages "
+            "(sending_application, sending_facility, message_control_id, message_type) "
+            "VALUES (%s, %s, %s, %s)",
+            ("SYN_CONC", "SYN_FAC", control_id, "ADT^A04"),
+        )
+        cursor.execute(
+            "INSERT INTO patients (first_name, last_name, date_of_birth, gender) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            ("Morgan", "Concurrent", "1988-04-12", "female"),
+        )
+        held["patient_id"] = cursor.fetchone()[0]
+        cursor.execute(
+            "INSERT INTO patient_identifiers (patient_id, system, value) VALUES (%s, %s, %s)",
+            (held["patient_id"], MRN_SYSTEM, mrn),
+        )
+
+    return hold
+
+
+def assert_one_patient_and_both_messages(connect, mrn, control_ids):
+    conn = connect(autocommit=True)
+    assert conn.execute(
+        "SELECT (SELECT count(*) FROM patients), "
+        "(SELECT count(*) FROM patient_identifiers WHERE value = %s)",
+        (mrn,),
+    ).fetchone() == (1, 1)
+    tracked = conn.execute(
+        "SELECT message_control_id FROM hl7_messages ORDER BY message_control_id"
+    ).fetchall()
+    assert [row[0] for row in tracked] == sorted(control_ids)
+    return conn
+
+
+def test_concurrent_registrations_of_the_same_mrn_converge_on_one_patient(
+    connect, monkeypatch, disposable_database, record_property
+):
+    """
+    A (direct SQL) holds the writes of a first ADT^A04 for MRN SYN-CONC-777 under control
+    ID SYN-CONC-A. B is the real register_patient_from_hl7 for the same MRN under a
+    different control ID, so its tracking insert succeeds and it blocks on the identifier.
+    After A commits, B must report the existing patient instead of failing.
+    """
+    seen = observe_worker_connection(monkeypatch, hl7_service, disposable_database)
+    held = {}
+
+    (kind, value), evidence = run_race(
+        connect,
+        seen,
+        hold_first_registration(held, "SYN-CONC-A", "SYN-CONC-777"),
+        lambda: hl7_service.register_patient_from_hl7(registration("SYN-CONC-B", "SYN-CONC-777")),
+        "commit",
+        disposable_database,
+    )
+
+    assert_blocking_evidence(evidence, "INSERT INTO PATIENT_IDENTIFIERS", record_property)
+    assert evidence["b_isolation"] == EXPECTED_ISOLATION
+    assert kind == "ok", value
+    assert value == {
+        "status": "already_exists",
+        "patient_id": held["patient_id"],
+        "mrn": "SYN-CONC-777",
+    }
+    conn = assert_one_patient_and_both_messages(
+        connect, "SYN-CONC-777", ["SYN-CONC-A", "SYN-CONC-B"]
+    )
+
+    # Both processed control IDs are now replays.
+    for control_id in ("SYN-CONC-A", "SYN-CONC-B"):
+        replay = hl7_service.register_patient_from_hl7(registration(control_id, "SYN-CONC-777"))
+        assert replay["status"] == "duplicate"
+    assert conn.execute("SELECT count(*) FROM hl7_messages").fetchone()[0] == 2
+
+
+@pytest.fixture
+def hl7_client():
+    """A TestClient whose caller holds patients:write; no user rows are needed."""
+    from fastapi.testclient import TestClient
+
+    from auth_dependencies import get_current_user
+    from main import app
+
+    original = app.dependency_overrides.copy()
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": 1,
+        "username": "synthetic_hl7_sender",
+        "email": "synthetic.hl7@example.org",
+        "role": "admin",
+        "is_active": True,
+    }
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(original)
+
+
+@pytest.mark.parametrize("accept", ["application/json", "application/hl7-v2"])
+def test_concurrent_same_mrn_registration_over_http(
+    accept, connect, monkeypatch, disposable_database, record_property, hl7_client
+):
+    """
+    Real concurrent HTTP path: B is a POST /hl7/adt request through the real route and
+    service, blocked by A's uncommitted registration of the same MRN. After A commits, the
+    recovered result must keep the response contract of the sequential already_exists
+    case: 200 with the JSON result, or an AA acknowledgment for B's own control ID.
+    """
+    seen = observe_worker_connection(monkeypatch, hl7_service, disposable_database)
+    held = {}
+    message = registration("SYN-HTTP-B", "SYN-HTTP-555")
+
+    (kind, response), evidence = run_race(
+        connect,
+        seen,
+        hold_first_registration(held, "SYN-HTTP-A", "SYN-HTTP-555"),
+        lambda: hl7_client.post(
+            "/hl7/adt", content=message, headers={"Content-Type": "text/plain", "Accept": accept}
+        ),
+        "commit",
+        disposable_database,
+    )
+
+    assert_blocking_evidence(evidence, "INSERT INTO PATIENT_IDENTIFIERS", record_property)
+    assert evidence["b_isolation"] == EXPECTED_ISOLATION
+    assert kind == "ok", response
+    assert response.status_code == 200, response.text
+    if accept == "application/json":
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.json() == {
+            "status": "already_exists",
+            "patient_id": held["patient_id"],
+            "mrn": "SYN-HTTP-555",
+        }
+    else:
+        assert response.headers["content-type"].startswith("application/hl7-v2")
+        msh, msa = response.text.rstrip("\r").split("\r")
+        assert msh.split("|")[8] == "ACK^A04"
+        assert msa == "MSA|AA|SYN-HTTP-B"
+    assert_one_patient_and_both_messages(connect, "SYN-HTTP-555", ["SYN-HTTP-A", "SYN-HTTP-B"])

@@ -78,6 +78,30 @@ the patient change. JSON results:
 Only successfully processed messages are recorded, so a corrected message can be resent
 with the same control ID after a failure. No audit event is written for HL7 processing.
 
+Patient identity for HL7 is the pair (system, value) in `patient_identifiers`, protected by
+the `unique_patient_identifier` constraint. The system is always the constant
+`https://medibridge.example.org/mrn` and the value is the first component of PID-3; the
+assigning authority is not part of the identity, so the same MRN from two authorities is
+treated as one patient.
+
+Two A04 messages for the same MRN with different control IDs can be processed at the same
+time. Which path the second one takes depends on timing:
+
+- If the first registration has committed before the second looks up the MRN, the second
+  takes the normal sequential path and returns `already_exists`.
+- If both look up the MRN before either commits, the second waits on the uniqueness
+  constraint until the first commits. Its own patient row is then rolled back inside a
+  savepoint, it returns `already_exists` for the first patient, and its message is still
+  recorded. With `Accept: application/hl7-v2` the response is an `AA` acknowledgment for its
+  own control ID. If the first registration rolls back instead, the second creates the
+  patient.
+
+Both paths give the same result: one patient, one identifier and both messages recorded.
+The recovery relies on PostgreSQL's default READ COMMITTED isolation, which MediBridge does
+not change. Under REPEATABLE READ or SERIALIZABLE the waiting registration may not see the
+first patient and fails with the original `UniqueViolation` instead. Other database errors
+are not converted and fail as before. A08 updates are unchanged.
+
 ### Acknowledgments
 
 When the client sends `Accept: application/hl7-v2`, the response has content type

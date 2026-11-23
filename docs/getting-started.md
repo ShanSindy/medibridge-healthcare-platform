@@ -15,7 +15,7 @@ new non-superuser role.
 | 3. Role and database | The `CREATE ROLE` and `CREATE DATABASE ... OWNER` statements were executed with unique names through a script, which set the password the way `\password` does; the interactive `psql` session itself was not run |
 | 4. `.env`: copy, placeholder rejected, key generated | Executed in Windows PowerShell; key command also in Git Bash |
 | 5. Migrations, including `btree_gist`, as the non-superuser owner; re-run skips | Executed against real PostgreSQL |
-| 6. First-user procedure | Both Python blocks executed verbatim in Python's interactive console, with the prompts answered by a script rather than typed by a person |
+| 6. `provision_user.py` | Tests run the command's code against real PostgreSQL (creation, duplicates, sign-in, target mismatch, lock timeout, rollback before commit) and the real entry point as a child process (help, refusal without a terminal). Console detection was checked with the real Windows API in a hidden console, with `NUL` and with a pipe. On 2026-11-22 the maintainer ran five manual console checks in Windows PowerShell 5.1 with Python 3.14.10 against an unreachable placeholder target (short password, mismatch, Ctrl+C, valid password with no database, piped input); all passed, and no password characters or masking characters appeared. Creating and signing in a user interactively against a live database was not done manually; database persistence and sign-in are covered by the automated tests |
 | 7. `seed_demo_data.py` | Tests run the command against real PostgreSQL (authorization marker, refusals, read-only dry run, schema pinning, seeding, repeat and concurrent runs, lock timeout, rollback). API-mode pages checked in headless Edge against a seeded disposable database (2026-11-22). The marker is set only on disposable databases. A test asserts that the command's session is a non-superuser that owns the database and tables and then seeds; it runs wherever the test role is not a superuser, as in CI, and is skipped only under the local `TEST_DB_ALLOW_SUPERUSER=1` override |
 | 8. Backend, `/health`, `/docs`, `/redoc`, `/openapi.json`, sign-in | Executed against real PostgreSQL |
 | 9. Frontend `npm ci`, demo mode, API mode through the `/api` proxy, sign-in | Executed (Git Bash and headless Chrome on Windows) |
@@ -138,59 +138,64 @@ recorded in the `schema_migrations` table, so running it again is safe. Each mig
 runs in its own transaction: if one fails, it is rolled back and not recorded, and the
 script stops. It ends with `Database migrations complete.`
 
-## 6. Create the first user (temporary developer procedure)
+## 6. Create the first user
 
-There is no sign-up endpoint, seed script or user-management command yet. Until a
-supported provisioning command exists (planned before Phase 2), create users by calling
-the existing `user_service.create_user` function from a Python session. This is a
-developer onboarding step, not a supported production user-provisioning interface.
+There is no sign-up endpoint and no default account. Create users with
+`provision_user.py`, from the repository root with the environment active:
 
-What the function does, from [user_service.py](../user_service.py):
-
-- `create_user(username, email, password, role="viewer")` hashes the password with
-  Argon2id and inserts one row into `users`, committing on success.
-- It connects with the settings from `.env`, like the application.
-- It has no password policy. The database enforces unique usernames and emails and a
-  role of `admin`, `clinician`, `scheduler` or `viewer`; a violation raises an error and
-  nothing is written.
-- It returns the new user's `id`, `username`, `email`, `role`, `is_active` and
-  `created_at` (never the password or hash).
-
-Start `python` in the repository root and paste the first block. It only reads which
-database and role you are connected to:
-
-```python
-from database import get_connection
-
-with get_connection() as conn:
-    print(
-        conn.execute(
-            "SELECT current_database(), current_user, inet_server_addr(), inet_server_port()"
-        ).fetchone()
-    )
+```bash
+python provision_user.py --database medibridge_dev --username jordan.admin --email jordan.admin@example.org --role admin --confirm-admin
 ```
 
-**Stop if that is not your development database.** Otherwise paste the second block in
-the same session. It asks for each value. The password is read with `getpass`: it is not
-echoed and does not appear in shell or Python history (the username, email and role you
-type may be recorded in Python's history, so they should be synthetic too):
+What the command does, in order:
 
-```python
-from getpass import getpass
-from user_service import create_user
+1. Checks the arguments. `--role` is one of `admin`, `clinician`, `scheduler` or `viewer`;
+   an `admin` also requires `--confirm-admin`. The username must not contain whitespace or
+   control characters (at most 50 characters). The email address gets a basic check of this
+   command only, not an application-wide policy: exactly one `@`, a non-empty local part,
+   and a domain of at least two labels (letters, digits, inner hyphens; internationalised
+   domains in punycode).
+2. Reads `DB_*` settings from the environment, then from `.env` next to the script for
+   anything the environment does not set (the application's own precedence;
+   `PYTHON_DOTENV_DISABLED` is honoured). `--database` must equal `DB_NAME`. It prints the
+   target database, host, port and database role, never the database password.
+3. Requires an interactive terminal, then asks for the password twice without echo. It is
+   never a command-line argument and must be 12 to 1024 characters (a rule of this command
+   only). Without a terminal, or if the terminal cannot hide input, the command refuses.
+   Nothing has connected to the database yet.
+4. Opens one connection with a 10 s connect timeout, a 10 s lock timeout and a 30 s
+   statement timeout (for this session only). On that connection it checks the actual
+   database (`current_database()`), role (`current_user`, `session_user`) and port against
+   the requested target, then inserts the user with the application's user service
+   (Argon2id) and commits, all in one transaction on the same connection.
 
-user = create_user(
-    username=input("Username: "),
-    email=input("Email (use a reserved domain such as example.org): "),
-    password=getpass("Password: "),
-    role=input("Role (admin, clinician, scheduler or viewer): "),
-)
-print({key: user[key] for key in ("id", "username", "role")})
-```
+The identity check catches accidental mis-targeting, for example a connection-pooler alias
+that maps the name to another database. It is not an authentication of the server; that
+requires TLS with certificate verification, which MediBridge does not configure.
 
-Create an `admin` account first: it has every permission in the API. The API has no
-user-management endpoints, so every further account (for example a `clinician` for
-viewing patients) is created with this same procedure.
+An existing username or email is reported and left unchanged; the command never updates or
+resets a user. The schema must exist: run `python migrate.py` first.
+
+Create an `admin` first; every further account (for example a `clinician` for viewing
+patients) is created the same way, because the API has no user-management endpoints.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | User created and committed |
+| 1 | Unexpected error (only the PostgreSQL error code or error type is shown); not committed |
+| 2 | Invalid arguments, or `admin` without `--confirm-admin` |
+| 3 | Missing `DB_*` settings, `--database` does not match `DB_NAME`, or the connected database, role or port differs; not committed |
+| 4 | Password not accepted: too short or long, confirmation differs, or no secure terminal |
+| 5 | Database unreachable, busy beyond the timeouts, or not migrated; not committed |
+| 6 | A user with this username or email already exists; not committed |
+| 7 | **Outcome unknown**: the connection failed or the command was interrupted while committing |
+| 130 | Interrupted during password entry (nothing was sent to the database) or before the commit (not committed) |
+
+"Not committed" is certain in every case except exit code 7, because those failures happen
+before the command sends `COMMIT`. With exit code 7 the user may or may not exist. Do not
+run the command again straight away; first check, for example with
+`psql -d medibridge_dev -c "SELECT id, username, role, created_at FROM users WHERE username = 'jordan.admin'"`
+or by signing in. Run the command again only if the user does not exist.
 
 ## 7. Synthetic demonstration data (optional)
 
@@ -390,6 +395,6 @@ API; the [frontend README](../frontend/README.md) explains each mode.
 | A request hangs instead of failing when PostgreSQL is down | Known limitation: connections are opened without a timeout. Check that PostgreSQL is running and the `DB_*` settings are correct, then stop the request |
 | `/health` is fine but other requests fail | `/health` does not check the database. Check PostgreSQL and the `DB_*` settings |
 | `.venv\Scripts\Activate.ps1` is blocked by execution policy | Run the environment's interpreter directly instead, for example `.venv\Scripts\python -m pip ...` and `.venv\Scripts\python migrate.py` |
-| `401 Incorrect username or password` | Wrong credentials, an inactive account, or a user created in a different database (check step 6's first block) |
+| `401 Incorrect username or password` | Wrong credentials, an inactive account, or a user created in a different database (check the target printed by `provision_user.py`) |
 | The browser shows CORS errors | Use `VITE_API_BASE_URL=/api` so requests go through the Vite proxy |
 | Frontend problems such as missing styles or a blank page | See the troubleshooting section of the [frontend README](../frontend/README.md#troubleshooting) |

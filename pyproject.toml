@@ -85,6 +85,7 @@ include = [
     "models.py",
     "patients.py",
     "permissions.py",
+    "provision_user.py",
     "provider_service.py",
     "security.py",
     "seed_demo_data.py",
