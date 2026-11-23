@@ -16,6 +16,7 @@ new non-superuser role.
 | 4. `.env`: copy, placeholder rejected, key generated | Executed in Windows PowerShell; key command also in Git Bash |
 | 5. Migrations, including `btree_gist`, as the non-superuser owner; re-run skips | Executed against real PostgreSQL |
 | 6. `provision_user.py` | Tests run the command's code against real PostgreSQL (creation, duplicates, sign-in, target mismatch, lock timeout, rollback before commit) and the real entry point as a child process (help, refusal without a terminal). Console detection was checked with the real Windows API in a hidden console, with `NUL` and with a pipe. On 2026-11-22 the maintainer ran five manual console checks in Windows PowerShell 5.1 with Python 3.14.10 against an unreachable placeholder target (short password, mismatch, Ctrl+C, valid password with no database, piped input); all passed, and no password characters or masking characters appeared. Creating and signing in a user interactively against a live database was not done manually; database persistence and sign-in are covered by the automated tests |
+| 7. `seed_demo_data.py` | Tests run the command against real PostgreSQL (authorization marker, refusals, read-only dry run, schema pinning, seeding, repeat and concurrent runs, lock timeout, rollback). API-mode pages checked in headless Edge against a seeded disposable database (2026-11-22). The marker is set only on disposable databases. A test asserts that the command's session is a non-superuser that owns the database and tables and then seeds; it runs wherever the test role is not a superuser, as in CI, and is skipped only under the local `TEST_DB_ALLOW_SUPERUSER=1` override |
 | 8. Backend, `/health`, `/docs`, `/redoc`, `/openapi.json`, sign-in | Executed against real PostgreSQL |
 | 9. Frontend `npm ci`, demo mode, API mode through the `/api` proxy, sign-in | Executed (Git Bash and headless Chrome on Windows) |
 | POSIX commands | Run in Git Bash on Windows only; not executed on Linux or macOS |
@@ -196,12 +197,145 @@ run the command again straight away; first check, for example with
 `psql -d medibridge_dev -c "SELECT id, username, role, created_at FROM users WHERE username = 'jordan.admin'"`
 or by signing in. Run the command again only if the user does not exist.
 
-## 7. Synthetic data
+## 7. Synthetic demonstration data (optional)
 
-There is no seed or demo-data script for the backend. Create records through the API (see
-[api.md](api.md)) or by sending synthetic HL7 `ADT^A04` messages (see
-[interoperability.md](interoperability.md)). Use obviously fictional names, dates and
-identifiers, and reserved domains such as `example.org` for email addresses.
+`seed_demo_data.py` loads a fixed synthetic dataset:
+- 16 fictional patients with MRNs `DEMO-000001` to `DEMO-000016`;
+- 6 providers in 6 specialties, with `example.org` addresses;
+- 20 appointments: 11 scheduled, 6 completed and 3 cancelled.
+
+It creates no users, passwords or audit events. Create users separately with
+`provision_user.py` (step 6).
+
+**Use a database created only for synthetic demonstrations.** Do not use your normal
+development database, and never a database that holds real data. The command refuses
+every database that you have not explicitly authorized.
+
+### Prepare and authorize the target
+
+1. Create a new database for demonstrations (step 3) and set `DB_NAME` to it. Apply the
+   migrations to it (step 5).
+2. As the database owner, connected to that database, look up its authorization value:
+
+   ```sql
+   SELECT 'medibridge-synthetic-demo-target:' || datname || ':' || oid
+   FROM pg_database WHERE datname = current_database();
+   ```
+
+3. Authorize the database by setting that exact value as the comment on its `public`
+   schema:
+
+   ```sql
+   COMMENT ON SCHEMA public IS 'medibridge-synthetic-demo-target:medibridge_demo:123456';
+   ```
+
+   Replace the example value with the one returned in step 2. The command prints the exact
+   statement when a database is not authorized. It never sets the comment itself.
+
+The value is bound to the database's name and OID. A renamed database, and a copy made from
+it as a template in the same PostgreSQL cluster, therefore fail the check until the owner
+authorizes them again. This is not a guarantee for every copy, because an OID is only
+unique within one cluster:
+
+- A physical copy keeps the name, the OID and the comment, so the marker still matches.
+  This includes a base backup, a point-in-time restore, a promoted replica, a disk or VM
+  snapshot and `pg_upgrade` (which keeps database OIDs from PostgreSQL 15).
+- A logical dump restored into another cluster gets a new OID, which can by chance equal
+  the original, for example in a freshly created server where the database is created
+  first. If the dump carries the schema comment, the marker then matches.
+
+In those cases the remaining safeguard is that the command refuses tables that already
+contain data (see below).
+
+The marker protects against accidentally targeting the wrong database. It is not an access
+control: any owner or superuser of a database can set it.
+
+**Required privileges.** Run the command as the role that owns the MediBridge tables: the
+role that ran `migrate.py` (step 5), which is also the database owner and so may set the
+comment on `public`. The command locks six tables in `SHARE ROW EXCLUSIVE` mode, which
+needs `UPDATE`, `DELETE` or `TRUNCATE` on each of them; a role with only `INSERT` and
+`SELECT` is refused with exit code 3 and nothing is written.
+
+### Check, then seed
+
+```bash
+python seed_demo_data.py --database medibridge_demo --dry-run
+python seed_demo_data.py --database medibridge_demo --confirm-synthetic-demo
+```
+
+The command opens one connection with a 10 s connect timeout, a 10 s lock timeout, a 60 s
+statement timeout and the search path `pg_catalog, public, pg_temp` (for this session
+only). On that connection, inside the seeding transaction and before anything is locked
+or written, it checks all of the following:
+
+- `--database` equals `DB_NAME` and the actual `current_database()`. The names
+  `medibridge`, `medibridge_test`, `medibridge_ci_test`, `postgres`, `template0` and
+  `template1` are always refused, even if authorized.
+- The connected role equals `DB_USER`, and the port is the configured one.
+- The transaction runs at READ COMMITTED. It is read-only for `--dry-run` and read-write
+  otherwise, as reported by PostgreSQL (`transaction_read_only`).
+- The session's search path is the pinned one, and no table with the name of a checked
+  table exists in any schema other than `public`. A schema named after the role, for
+  example, would otherwise come first in PostgreSQL's default search path.
+- The authorization marker matches.
+
+It then locks the patient, identifier, provider, appointment, HL7 message and audit-log
+tables (`SHARE ROW EXCLUSIVE`). It requires all six tables to be empty and inserts
+everything in one transaction. Every statement names its table as `public.<table>`, the
+schema that the marker authorizes.
+
+| Existing data | Allowed? |
+|---|---|
+| Users (for example created with `provision_user.py`) | Yes, unchanged |
+| `schema_migrations` (from `migrate.py`) | Yes |
+| Patients, identifiers, providers or appointments | No: exit code 4 |
+| HL7 messages or audit events (they would describe records that are not in the dataset) | No: exit code 4 |
+
+Other behaviour:
+
+- **Dry run.** `--dry-run` runs the same target checks in a read-only transaction and
+  reports whether the tables are empty. The command refuses to continue unless PostgreSQL
+  reports the transaction as read-only, so any write would fail (SQLSTATE 25006). It is advisory only: another session can write
+  before you seed, so the tables are checked again, under lock, when seeding.
+- **Repeat runs.** A second run is refused (exit code 4) and changes nothing. The command
+  never updates, deletes or resets data; to start again, use a new authorized database.
+- **Concurrent runs.** A second command started at the same time waits for the first
+  one's locks. It then sees the committed rows and is refused.
+- **Anchor date.** Appointment dates are relative to midnight UTC today, or to `--anchor`
+  for a reproducible dataset. The anchor must be an ISO 8601 date and time with a UTC
+  offset, for example `2031-01-06T00:00:00+00:00`.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Seeded and committed (or dry run: authorized and tables empty) |
+| 1 | Unexpected error (only the PostgreSQL error code or error type is shown); not committed |
+| 2 | Invalid arguments, including a malformed or offset-less `--anchor` |
+| 3 | Missing settings, name mismatch, protected database, wrong connected database or role, unexpected session settings (isolation, read-only mode, search path), same-named tables outside `public`, not authorized, or the role lacks the privileges above; not committed |
+| 4 | Required tables are not empty; not committed |
+| 5 | Database unreachable, tables busy beyond the lock timeout, or not migrated; not committed |
+| 6 | **Outcome unknown**: the connection failed during the commit |
+
+"Not committed" is certain in every case except exit code 6. With exit code 6 the dataset
+may or may not have been written. Do not run the command again straight away; first check,
+for example with `SELECT count(*) FROM patients`. Sixteen patients means the seed was
+committed. Zero means nothing was written, and you can run it again.
+
+### What the frontend shows
+
+With the backend running, a user created (step 6) and the frontend in API mode (step 9):
+
+- The **Dashboard**, **Patients** and **Providers** pages show the seeded patients and
+  providers.
+- The **Appointments**, **FHIR Explorer**, **HL7 Integration** and **Audit Logs** pages
+  still show built-in demo data or placeholders, not the seeded records. The seeded
+  appointments are available through `GET /appointments`.
+
+This was checked on 2026-11-22 in headless Edge against a seeded disposable database
+(16 patients and 6 providers in the UI; 20 appointments, 11 scheduled, through the API).
+
+You can also create records through the API (see [api.md](api.md)) or by sending synthetic
+HL7 `ADT^A04` messages (see [interoperability.md](interoperability.md)). Use obviously
+fictional names, dates and identifiers, and reserved domains such as `example.org`.
 
 ## 8. Start the backend
 

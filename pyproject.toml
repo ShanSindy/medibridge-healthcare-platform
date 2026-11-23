@@ -88,6 +88,7 @@ include = [
     "provision_user.py",
     "provider_service.py",
     "security.py",
+    "seed_demo_data.py",
     "token_service.py",
     "user_service.py",
     # API routers
