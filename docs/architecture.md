@@ -9,14 +9,16 @@ request, HL7 and FHIR flows.
 
 `main.py` creates the FastAPI application (`main:app`), registers one exception handler
 (request-validation errors under `/fhir/` become FHIR `OperationOutcome` responses; all
-other paths keep FastAPI's default) and includes eight routers. There is no middleware,
-no startup or shutdown work, and no CORS configuration.
+other paths keep FastAPI's default) and includes eight routers. There is no middleware
+and no CORS configuration. The lifespan does no startup work (no database connection,
+migration or seeding); at shutdown it closes the shared database engine's idle
+connections, if a request ever created the engine.
 
 | Router module | Operations | Persistence path |
 |---|---|---|
 | [routers/system.py](../routers/system.py) | `GET /`, `GET /health` | None |
 | [routers/auth.py](../routers/auth.py) | login, current user, admin check | `auth_service` → `user_service` |
-| [routers/audit_logs.py](../routers/audit_logs.py) | `GET /audit-logs` | `audit_service` |
+| [routers/audit_logs.py](../routers/audit_logs.py) | `GET /audit-logs` | `audit_service` (shared SQLAlchemy engine) |
 | [routers/patients.py](../routers/patients.py) | Patient CRUD | **Inline SQL** in the handlers, audit rows via `audit.log_audit_event` |
 | [routers/providers.py](../routers/providers.py) | Provider CRUD | `provider_service` |
 | [routers/appointments.py](../routers/appointments.py) | Appointment create, read, list, update, cancel | `appointment_service` |
@@ -43,6 +45,7 @@ Tests enforce these rules (see
 | [hl7_parser.py](../hl7_parser.py), [hl7_service.py](../hl7_service.py), [hl7_tracking.py](../hl7_tracking.py), [hl7_ack.py](../hl7_ack.py) | Parse and validate ADT messages, write patients, track message IDs, build ACKs |
 | [fhir.py](../fhir.py) | Map database records to FHIR resources; build `OperationOutcome` |
 | [database.py](../database.py) | `get_connection()` from the `DB_*` settings; patient identifier queries |
+| [db_engine.py](../db_engine.py) | The shared SQLAlchemy engine: validated `DB_*` settings, one bounded connection pool per process |
 | [db_errors.py](../db_errors.py) | Map named constraint violations to 404 or 409 responses, per endpoint |
 | [models.py](../models.py) | Pydantic request and response models |
 | [migrate.py](../migrate.py), [migrations/](../migrations) | Plain SQL schema migrations, applied in order and recorded in `schema_migrations` |
@@ -50,9 +53,24 @@ Tests enforce these rules (see
 
 ## Data access
 
-- **Connections.** Every operation opens its own connection with `database.get_connection()`
-  (psycopg 3, no pool, no connection timeout). Connection blocks commit when they finish
-  normally and roll back when an exception escapes.
+- **Connections.** Database access is moving to SQLAlchemy Core one service at a time
+  (see [ADR 0001](decisions/0001-shared-sqlalchemy-engine.md)); both paths exist today.
+  - Most operations open their own connection with `database.get_connection()` (psycopg 3,
+    no pool, no connection timeout). Connection blocks commit when they finish normally
+    and roll back when an exception escapes.
+  - The audit-log read (`audit_service`) uses the shared engine in `db_engine.py`: a
+    bounded pool (by default 5 connections plus 5 overflow, a 10 s wait for a free
+    connection, a 10 s connect timeout), each connection tested before use. Its
+    `connect()` blocks never commit: whatever they leave open is rolled back when the
+    connection returns to the pool. The audit read also runs in a transaction PostgreSQL
+    keeps read-only. Writes will use `begin()` blocks, which commit on success and roll
+    back on error.
+  - The engine belongs to the process. It is created on first use, never at startup,
+    and disposed at application shutdown; connections still checked out at that moment
+    are not interrupted (see the ADR for the exact contract).
+  - The pool limit applies per process and only to the engine. The engine can hold at
+    most the number of worker processes × (pool size + overflow) connections; every
+    connection opened through `get_connection()` comes on top, without a limit.
 - **SQL.** All values are passed as query parameters. The search and filter queries
   (FHIR Patient search, provider search, appointment list) assemble their `WHERE` clause
   from fixed fragments in the code; user input never becomes SQL text.

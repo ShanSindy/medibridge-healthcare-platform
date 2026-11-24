@@ -1,19 +1,20 @@
 """
 Row-to-dict mapping in the service layer uses zip(..., strict=True).
 
-Each appointment query returns exactly the eight columns listed next to it,
-and the audit query maps rows against the cursor's own column descriptions.
+Each appointment query returns exactly the eight columns listed next to it.
 If a query and its column list ever drift apart, the mapping must fail loudly
 instead of silently dropping or mislabelling fields.
+
+The audit-log read no longer maps rows by hand: it uses SQLAlchemy result mappings,
+whose keys and values come from the same result. tests/test_audit_service.py checks
+its keys, order and value types against real PostgreSQL.
 """
 
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
 import pytest
 
 import appointment_service
-import audit_service
 from models import AppointmentCreate, AppointmentUpdate
 
 APPOINTMENT_COLUMNS = [
@@ -32,9 +33,8 @@ FULL_ROW = (7, 1, 2, STARTS, ENDS, "scheduled", "Synthetic visit", STARTS)
 
 
 class FakeCursor:
-    def __init__(self, rows, description=None):
+    def __init__(self, rows):
         self.rows = rows
-        self.description = description
 
     def __enter__(self):
         return self
@@ -66,10 +66,8 @@ class FakeConnection:
         return self._cursor
 
 
-def _use_rows(monkeypatch, module, rows, description=None):
-    monkeypatch.setattr(
-        module, "get_connection", lambda: FakeConnection(FakeCursor(rows, description))
-    )
+def _use_rows(monkeypatch, module, rows):
+    monkeypatch.setattr(module, "get_connection", lambda: FakeConnection(FakeCursor(rows)))
 
 
 APPOINTMENT_CALLS = {
@@ -103,27 +101,3 @@ def test_appointment_rows_that_do_not_match_the_columns_fail(monkeypatch, operat
 
     with pytest.raises(ValueError, match="zip"):
         APPOINTMENT_CALLS[operation]()
-
-
-AUDIT_COLUMNS = ["id", "user_id", "action", "resource_type", "resource_id", "outcome", "created_at"]
-AUDIT_ROW = (1, None, "patient.create", "patient", "7", "success", STARTS)
-
-
-def _description(names):
-    return [SimpleNamespace(name=name) for name in names]
-
-
-def test_audit_rows_map_every_column(monkeypatch):
-    _use_rows(monkeypatch, audit_service, [AUDIT_ROW], _description(AUDIT_COLUMNS))
-
-    [event] = audit_service.get_audit_logs(limit=10, offset=0)
-
-    assert list(event) == AUDIT_COLUMNS
-    assert event["action"] == "patient.create"
-
-
-def test_audit_rows_that_do_not_match_the_description_fail(monkeypatch):
-    _use_rows(monkeypatch, audit_service, [AUDIT_ROW[:-1]], _description(AUDIT_COLUMNS))
-
-    with pytest.raises(ValueError, match="zip"):
-        audit_service.get_audit_logs(limit=10, offset=0)

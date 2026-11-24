@@ -5,10 +5,23 @@ Every step that can destroy data first proves, through tests/db_safety.py,
 that the target is the exact database this object created.
 """
 
+import sys
+
 import psycopg
 from psycopg import sql
 
 from tests import db_safety
+
+
+def release_application_pool() -> None:
+    """
+    Closes the idle connections of the application's shared engine (db_engine.py), which
+    points at the session database. Imports nothing: if no test imported db_engine, there
+    is no pool to close.
+    """
+    db_engine = sys.modules.get("db_engine")
+    if db_engine is not None:
+        db_engine.dispose_engine()
 
 
 class DisposableDatabase:
@@ -29,10 +42,21 @@ class DisposableDatabase:
 
     # --- connections ---------------------------------------------------------------
 
+    def _connect(self, dbname: str) -> psycopg.Connection:
+        """
+        An autocommit connection, returned only after checking that it reached the
+        configured server (db_safety.check_destination); closed otherwise.
+        """
+        conn = psycopg.connect(**self.config.connect_kwargs(dbname), autocommit=True)
+        try:
+            db_safety.check_destination(conn.info, self.config.host)
+        except BaseException:
+            conn.close()
+            raise
+        return conn
+
     def admin_connection(self) -> psycopg.Connection:
-        return psycopg.connect(
-            **self.config.connect_kwargs(self.config.maintenance_db), autocommit=True
-        )
+        return self._connect(self.config.maintenance_db)
 
     def role_status(self) -> tuple[bool, bool, bool]:
         """(is_superuser, can_create_db, in_recovery) for the configured role."""
@@ -74,7 +98,7 @@ class DisposableDatabase:
     # --- per-test cleanup -----------------------------------------------------------
 
     def open_cleanup_connection(self) -> None:
-        conn = psycopg.connect(**self.config.connect_kwargs(self.name), autocommit=True)
+        conn = self._connect(self.name)
         # Fail fast instead of hanging if a test leaves a transaction open.
         conn.execute("SET lock_timeout = '5s'")
         self.cleanup_connection = conn
@@ -122,12 +146,24 @@ class DisposableDatabase:
         """
         Drops the database if, and only if, it is provably the one this object
         created. Otherwise records why and raises; nothing is dropped.
+
+        For the session database, the application's pooled connections to it are
+        closed first, so ending them does not depend on WITH (FORCE). A failure there
+        is not a reason to keep the database: the identity-checked drop still runs
+        (WITH (FORCE) ends any connection left open), and the failure is recorded and
+        raised afterwards.
         """
         if self.cleanup_connection is not None:
             self.cleanup_connection.close()
             self.cleanup_connection = None
         if not self.create_attempted or self.dropped:
             return
+        release_error = None
+        if db_safety.is_session_database(self.name):
+            try:
+                release_application_pool()
+            except Exception as exc:
+                release_error = exc
         try:
             with self.admin_connection() as admin:
                 found, current_role_oid = db_safety.fetch_identity(admin, self.name)
@@ -143,5 +179,12 @@ class DisposableDatabase:
                 )
         except Exception as exc:
             self.drop_error = f"{type(exc).__name__}: {exc}"
+            if release_error is not None:
+                exc.add_note(f"Releasing the application pool also failed: {release_error!r}")
             raise
         self.dropped = True
+        if release_error is not None:
+            self.drop_error = (
+                f"pool release failed: {type(release_error).__name__}: {release_error}"
+            )
+            raise release_error

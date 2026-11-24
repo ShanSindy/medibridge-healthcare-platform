@@ -7,6 +7,8 @@ Architecture rules for the routers package:
 """
 
 import ast
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -81,12 +83,26 @@ def test_every_router_module_is_registered_on_the_app():
     assert {f"routers.{name}" for name in ROUTER_MODULES} <= registered
 
 
-def test_application_lifespan_does_no_startup_or_shutdown_work():
+def test_application_lifespan_does_no_startup_work_and_creates_no_engine(monkeypatch):
     # Including routers makes FastAPI wrap each router's (default) lifespan
-    # around the app's; that must stay behaviourally empty.
+    # around the app's; those must stay behaviourally empty. The app's own
+    # lifespan (main.lifespan) does nothing at startup and, at shutdown, only
+    # disposes the shared database engine if one already exists
+    # (tests/test_app_lifespan.py). Here none exists, so the whole lifespan
+    # must neither build an engine nor open a database connection.
     import asyncio
 
+    import psycopg
+
+    import db_engine
     from main import app
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("the application lifespan must not create an engine or connect")
+
+    monkeypatch.setattr(db_engine, "_engine", None)
+    monkeypatch.setattr(db_engine, "build_engine", forbidden)
+    monkeypatch.setattr(psycopg, "connect", forbidden)
 
     messages = []
 
@@ -107,6 +123,41 @@ def test_application_lifespan_does_no_startup_or_shutdown_work():
     assert app.router.on_startup == []
     assert app.router.on_shutdown == []
     assert app.user_middleware == []
+    assert db_engine._engine is None
+
+
+IMPORT_CHECK = """
+import sys
+
+import psycopg
+
+def forbidden(*args, **kwargs):
+    raise AssertionError("importing main must not open a database connection")
+
+psycopg.connect = forbidden
+import main  # noqa: E402
+import db_engine  # noqa: E402
+
+print(db_engine._engine is None)
+print(sorted({"migrate", "seed_demo_data", "provision_user"} & set(sys.modules)))
+"""
+
+
+def test_importing_the_application_creates_no_engine_and_loads_no_setup_modules():
+    # A fresh interpreter, because this test session has long since imported main. It
+    # inherits the session's environment, so even a connection would only reach the
+    # disposable database; connecting fails before that.
+    result = subprocess.run(  # noqa: S603 - fixed arguments, no shell
+        [sys.executable, "-c", IMPORT_CHECK],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["True", "[]"]
 
 
 def test_no_operation_is_registered_twice():

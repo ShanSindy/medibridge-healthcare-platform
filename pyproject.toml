@@ -75,6 +75,7 @@ include = [
     "auth_dependencies.py",
     "auth_service.py",
     "database.py",
+    "db_engine.py",
     "db_errors.py",
     "fhir.py",
     "hl7_ack.py",
