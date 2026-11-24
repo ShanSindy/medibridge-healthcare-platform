@@ -84,7 +84,10 @@ backend's access-denied responses.
 - **Fail-closed configuration.** Tests read only `.env.test`, which must declare
   `MEDIBRIDGE_ENV=test`; the development `.env` is never loaded. Superuser test roles
   are refused unless explicitly allowed in `.env.test`, and runs that bypass the safety
-  setup are rejected. CI uses a dedicated non-superuser role.
+  setup are rejected. Inherited `PGHOSTADDR`, `PGSERVICE` and `PGOPTIONS`, which libpq
+  would apply despite the explicit settings, stop the run, and the harness checks the
+  address its create, clean and drop connections actually reached before using them. CI uses a dedicated
+  non-superuser role.
 - **Dependency audits.** CI runs `pip-audit --strict` and `npm audit` on every pull request
   and push to `main`.
 
@@ -108,7 +111,9 @@ engineering judgements, not the result of a formal security assessment.
 | No refresh tokens and no token revocation list; tokens stay valid until they expire, unless the account is deactivated | Low |
 | No password-strength policy for created users | Low |
 | No application-level CORS configuration (the dashboard relies on the Vite development proxy) | Low |
-| Database connections have no timeout, so requests hang if PostgreSQL is unreachable | Low (reliability) |
+| Connections from `database.get_connection()` have no timeout, so requests hang if PostgreSQL is unreachable (the shared engine, so far used only by the audit-log read, has a connect timeout and a pool wait timeout, but no statement or read timeout, so a query can still hang if the server stops responding mid-query) | Low (reliability) |
+| Outside the test suite, libpq environment variables such as `PGHOSTADDR`, `PGSERVICE` and `PGOPTIONS` still apply to the application's connections (both paths) and to `migrate.py`, `provision_user.py` and `seed_demo_data.py`; the process environment must be trusted | Low (operational) |
+| Database error messages can contain data: the shared engine hides bound parameters from its errors and statement log, but not the SQL text or PostgreSQL's own messages (such as a duplicate key value); unhandled errors reach the server log | Low |
 | `/health` reports liveness only; there is no database readiness check | Low (reliability) |
 | No HTTPS in the development setup | Low (deployment) |
 | Branch protection is not configured, so CI results are not required before merging | Low (process) |

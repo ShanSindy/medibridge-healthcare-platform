@@ -54,7 +54,12 @@ Two test modules protect the structure of the API:
   or another router (absolute and relative imports), that each router is a plain
   `APIRouter` without its own prefix, tags or dependencies, that every router is
   registered, that no operation is registered twice, and that the application lifespan
-  does no work.
+  does no startup work: importing `main` in a fresh interpreter creates no engine, opens no
+  connection and loads no migration, seeding or provisioning module, and running the
+  lifespan builds no engine and opens no connection.
+  `tests/test_app_lifespan.py` checks the shutdown side: an existing engine is disposed
+  once (its real idle connections close), repeated lifespans each dispose only what
+  exists, and a dispose failure is reported, not swallowed.
 
 **FastAPI compatibility.** These tests list routes with `fastapi.routing.iter_route_contexts`,
 because FastAPI includes routers lazily, and read some route attributes such as
@@ -68,6 +73,19 @@ The `tests/test_pg_*.py` modules check behaviour that depends on PostgreSQL itse
 constraints, transactions, persisted state and concurrency. They use the same disposable
 database as every other test (created per run, emptied before and after each test, dropped
 at the end of a normal run); there is no separate database lifecycle.
+
+The shared SQLAlchemy engine (`db_engine.py`) also connects to that database, because
+`DB_NAME` names it for the whole run. `DisposableDatabase.drop()` closes the engine's
+idle pooled connections before it drops the session database, so ending them does not
+rely on `WITH (FORCE)`; `tests/test_disposable_database.py` checks this on a scratch
+database standing in for the session database (the pooled connection is gone while the
+database still exists). If closing the pool fails, the identity-checked drop still runs and
+the failure is reported afterwards. `tests/test_db_engine.py` checks the engine's settings, pool limits,
+reuse, the wait for a free connection, rollback, hidden statement parameters, replacement
+of server-closed connections and disposal, on separate small engines verified to be
+connected to this run's database. The optional `DB_POOL_*` and
+`DB_CONNECT_TIMEOUT_SECONDS` settings are handled like the other connection settings: from
+`.env.test` when it exists, otherwise from the environment.
 
 | Module | What it checks | Tests |
 |---|---|---|
@@ -246,6 +264,29 @@ imported. It also disables loading of the development `.env`.
 
 Covered: accidental invocations that skip the root `conftest.py`, such as `--noconftest` or
 `--confcutdir`, as well as invalid or missing test configuration.
+
+**libpq environment variables.** Every test connection passes host, port, user, password
+and database explicitly, but libpq still reads some variables from the environment:
+`PGHOSTADDR` sends the connection to another address while the host still reads as
+`DB_HOST`, `PGSERVICE` loads settings (such as `hostaddr` or `options`) from a service file,
+and `PGOPTIONS` sets session parameters such as `search_path` on every connection. A run
+that inherits any of these three, even empty, stops before its first connection with an
+error that names the variable. Tests that need one set it themselves (the concurrency tests
+set `PGOPTIONS` for their timeouts). Other `PG*` variables are accepted: the explicit
+settings override `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD`; a password
+file is not consulted when a password is given; `PGSERVICEFILE` and `PGSYSCONFDIR` only
+matter together with `PGSERVICE`; transport, timing and display settings such as
+`PGSSLMODE`, `PGCONNECT_TIMEOUT` or `PGTZ` do not change where a connection goes.
+
+The harness's own connections (create, clean, drop) also check the address they actually
+reached (libpq's `hostaddr`; the reported host and port only repeat the settings) before
+running anything: a Unix-socket host must give a socket connection, an IP address must be
+reached exactly, and `localhost` must give a loopback address. For any other host name
+added to `TEST_DB_ALLOWED_HOSTS` only a TCP connection is required; the name is not
+resolved, so where it leads is not verified. This check runs after the connection is
+established: it keeps statements away from a wrong server, not the password. Preventing the
+redirection is the job of the startup refusal. `tests/test_libpq_environment.py` covers
+both.
 
 Not covered: deliberately disabling the guard (`-p no:tests.isolation_guard`, overriding
 `addopts`, using another configuration file), running test code outside pytest, or arbitrary

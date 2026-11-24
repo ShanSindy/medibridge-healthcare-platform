@@ -102,7 +102,7 @@ More detail, including request, HL7 and FHIR flow diagrams, is in
 | Layer | Technology |
 |---|---|
 | Backend | Python 3.14, FastAPI, Pydantic, Uvicorn |
-| Database | PostgreSQL (CI uses 18), psycopg 3, plain SQL migrations applied by `migrate.py` |
+| Database | PostgreSQL (CI uses 18), psycopg 3, SQLAlchemy 2.1 Core (shared connection pool, adopted one service at a time), plain SQL migrations applied by `migrate.py` |
 | Security | PyJWT (HS256), argon2-cffi |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS (Node.js 26) |
 | Quality | pytest, coverage.py, Ruff, ESLint, Vitest, pip-audit, npm audit, GitHub Actions |
@@ -233,7 +233,7 @@ database can be loaded with reproducible synthetic records using `seed_demo_data
 
 | Phase | Focus, including known backlog items |
 |---|---|
-| 2. Database modernization | SQLAlchemy Core and Alembic (proposed, pending implementation); connection timeouts and pooling |
+| 2. Database modernization | SQLAlchemy Core and Alembic, one service at a time; connection timeouts and pooling. Started: shared engine and pool, used by the audit-log read ([ADR 0001](docs/decisions/0001-shared-sqlalchemy-engine.md)) |
 | 3. API enhancement | Pagination and search for REST lists |
 | 4. Healthcare interoperability | HL7 version validation; consistent FHIR content types, errors and absolute links |
 | 5. Security and audit foundations | Broader audit coverage; login rate limiting and other authentication hardening |

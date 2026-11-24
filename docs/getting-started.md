@@ -115,6 +115,16 @@ cp .env.example .env               # POSIX shell
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | Yes | Connection to the database from step 3 |
 | `JWT_SECRET_KEY` | Yes | Token signing key, **at least 48 characters**. The application refuses to start with the placeholder |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | No | Token lifetime, default 30 |
+| `DB_POOL_SIZE`, `DB_POOL_MAX_OVERFLOW` | No | Connections kept open by the shared pool (1–50, default 5) and extra connections allowed under load (0–50, default 5) |
+| `DB_POOL_TIMEOUT_SECONDS`, `DB_CONNECT_TIMEOUT_SECONDS` | No | Wait for a free pooled connection, and for a new connection to open (1–300 s, default 10 each) |
+
+The pool settings apply only to code that has moved to the shared engine (currently the
+audit-log read; see [architecture.md](architecture.md#data-access)), and they apply per
+process: with several worker processes each has its own pool, and other code still opens
+connections outside it. An invalid value, or a missing or blank `DB_HOST`, `DB_PORT`,
+`DB_NAME` or `DB_USER`, stops that code with an error that names the setting; it never
+falls back to libpq's defaults. `DB_PASSWORD` may be empty if the server authenticates
+without one (for example through a password file).
 
 Generate a signing key and paste it into `.env` (the command prints the key, so do not
 run it where others can see your screen):

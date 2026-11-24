@@ -6,7 +6,10 @@ creates its own database, and every destructive step (truncate, drop) first
 proves that the target is that database:
 
 1. Explicit configuration: `MEDIBRIDGE_ENV=test`, all connection settings
-   present, and the database host on an allow list.
+   present, the database host on an allow list, and no inherited libpq
+   variable that could redirect a connection or change its session
+   (`PGHOSTADDR`, `PGSERVICE`, `PGOPTIONS`). The harness's own connections
+   (create, clean, drop) also check where they actually arrived.
 2. Name: `medibridge_test_` followed by 16 random hex characters, equal to the
    name this process generated.
 3. Identity: the PostgreSQL OID and owner recorded right after this process
@@ -14,9 +17,10 @@ proves that the target is that database:
 4. Ownership marker: a database comment written after creation.
 
 Error messages name missing or invalid settings but never print their values,
-except the database host.
+except the database host and the address a connection reached.
 """
 
+import ipaddress
 import re
 import secrets
 from collections.abc import Iterable, Mapping, MutableMapping
@@ -42,6 +46,11 @@ CONNECTION_KEYS = (
     "JWT_SECRET_KEY",
     "JWT_ALGORITHM",
     "JWT_ACCESS_TOKEN_EXPIRE_MINUTES",
+    # Optional limits of the shared SQLAlchemy engine (db_engine.py).
+    "DB_POOL_SIZE",
+    "DB_POOL_MAX_OVERFLOW",
+    "DB_POOL_TIMEOUT_SECONDS",
+    "DB_CONNECT_TIMEOUT_SECONDS",
 )
 REQUIRED_KEYS = ("DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "JWT_SECRET_KEY")
 
@@ -54,6 +63,16 @@ FLAG_KEYS = (
 # Accepted only from the local test env file, never from the environment, so
 # CI (which has no such file) can never run as a superuser.
 SUPERUSER_OVERRIDE_KEY = "TEST_DB_ALLOW_SUPERUSER"
+
+# libpq reads these from the environment even though every test connection passes
+# host, port, user, password and dbname explicitly. Inherited from the shell they
+# are refused before the first connection. Tests that need one (the concurrency
+# tests set PGOPTIONS) set it themselves, after this check.
+UNCONTROLLED_LIBPQ_VARIABLES = {
+    "PGHOSTADDR": "sends connections to another address while the host still reads as DB_HOST",
+    "PGSERVICE": "loads connection settings, such as hostaddr or options, from a service file",
+    "PGOPTIONS": "sets server session parameters, such as search_path or role, on every connection",
+}
 
 DEFAULT_ALLOWED_HOSTS = ("localhost", "127.0.0.1", "::1")
 DEFAULT_MAINTENANCE_DB = "postgres"
@@ -111,6 +130,7 @@ def resolve_settings(
     process environment supplies the connection settings. When the file
     exists, connection settings come only from it.
     """
+    check_libpq_environment(process_env)
     if process_env.get(SUPERUSER_OVERRIDE_KEY):
         raise UnsafeTestDatabase(
             f"{SUPERUSER_OVERRIDE_KEY} is only accepted from the local .env.test file, "
@@ -128,6 +148,74 @@ def resolve_settings(
     if file_values and file_values.get(SUPERUSER_OVERRIDE_KEY):
         settings[SUPERUSER_OVERRIDE_KEY] = str(file_values[SUPERUSER_OVERRIDE_KEY])
     return settings
+
+
+def check_libpq_environment(process_env: Mapping[str, str]) -> None:
+    """
+    Refuses inherited libpq variables that could redirect a test connection or change
+    its session, whatever their value (even empty). Names them, never their values.
+
+    Others are left alone: PGHOST, PGPORT, PGDATABASE, PGUSER and PGPASSWORD are
+    overridden by the explicit settings; PGPASSFILE is not consulted when a password
+    is given; PGSERVICEFILE and PGSYSCONFDIR only matter together with PGSERVICE;
+    transport (PGSSLMODE and similar), timing (PGCONNECT_TIMEOUT) and presentation
+    settings (PGTZ, PGDATESTYLE, PGCLIENTENCODING, PGAPPNAME) do not change where a
+    connection goes or what the safety checks see.
+    """
+    present = [name for name in UNCONTROLLED_LIBPQ_VARIABLES if name in process_env]
+    if present:
+        reasons = "; ".join(f"{name} {UNCONTROLLED_LIBPQ_VARIABLES[name]}" for name in present)
+        raise UnsafeTestDatabase(
+            f"Unset {', '.join(present)} before running the tests ({reasons}). For example "
+            f"`unset {present[0]}` in bash or `Remove-Item Env:{present[0]}` in PowerShell."
+        )
+
+
+def _is_unix_socket_path(host: str) -> bool:
+    # libpq's rule: an absolute path (on Windows also with a backslash or a drive
+    # letter), or "@" for an abstract socket on Linux.
+    if host.startswith(("/", "\\", "@")):
+        return True
+    return len(host) > 2 and host[0].isalpha() and host[1] == ":" and host[2] in "/\\"
+
+
+def check_destination(info, host: str) -> None:
+    """
+    Checks the address a connection actually reached (psycopg's `conn.info.hostaddr`,
+    "" for a Unix socket), before any statement runs on it. It is the only evidence of
+    the real destination: `conn.info.host` and `conn.info.port` repeat the settings that
+    were passed in, even when PGHOSTADDR or a service file sent the connection elsewhere.
+
+    - Unix-socket path: the connection must be a socket connection.
+    - IP address: the connection must have reached exactly that address.
+    - `localhost`: the connection must have reached a loopback address.
+    - Any other host name (only if added to TEST_DB_ALLOWED_HOSTS): only a TCP connection
+      is required. The name is not resolved here, so where it leads is not verified.
+
+    The check runs after the connection is established, so it keeps statements away
+    from a wrong server but cannot keep the password from reaching it; preventing the
+    redirection is the job of check_libpq_environment.
+    """
+    address = info.hostaddr or ""
+    refused = UnsafeTestDatabase(
+        f"The connection reached {address or 'a Unix socket'}, not DB_HOST '{host}'."
+    )
+    if _is_unix_socket_path(host):
+        if address:
+            raise refused
+        return
+    try:
+        reached = ipaddress.ip_address(address)
+    except ValueError:
+        raise refused from None
+    try:
+        configured = ipaddress.ip_address(host)
+    except ValueError:
+        configured = None
+    if configured is not None and reached != configured:
+        raise refused
+    if configured is None and host.lower() == "localhost" and not reached.is_loopback:
+        raise refused
 
 
 def validate_settings(settings: Mapping[str, str]) -> TestDatabaseConfig:
