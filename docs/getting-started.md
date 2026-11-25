@@ -117,9 +117,11 @@ cp .env.example .env               # POSIX shell
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | No | Token lifetime, default 30 |
 | `DB_POOL_SIZE`, `DB_POOL_MAX_OVERFLOW` | No | Connections kept open by the shared pool (1–50, default 5) and extra connections allowed under load (0–50, default 5) |
 | `DB_POOL_TIMEOUT_SECONDS`, `DB_CONNECT_TIMEOUT_SECONDS` | No | Wait for a free pooled connection, and for a new connection to open (1–300 s, default 10 each) |
+| `DB_STATEMENT_TIMEOUT_SECONDS`, `DB_LOCK_TIMEOUT_SECONDS` | No | Upper limits for PostgreSQL `statement_timeout` (1–300 s, default 30) and `lock_timeout` (1–60 s, default 5) in every transaction on the shared pool; a stricter value already set for the session (for example by a role setting) is kept |
 
-The pool settings apply only to code that has moved to the shared engine (currently the
-audit-log read; see [architecture.md](architecture.md#data-access)), and they apply per
+The pool and timeout settings apply only to code that has moved to the shared engine
+(currently the audit-log and provider reads; see
+[architecture.md](architecture.md#data-access)), and they apply per
 process: with several worker processes each has its own pool, and other code still opens
 connections outside it. An invalid value, or a missing or blank `DB_HOST`, `DB_PORT`,
 `DB_NAME` or `DB_USER`, stops that code with an error that names the setting; it never

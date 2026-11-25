@@ -20,10 +20,10 @@ connections, if a request ever created the engine.
 | [routers/auth.py](../routers/auth.py) | login, current user, admin check | `auth_service` → `user_service` |
 | [routers/audit_logs.py](../routers/audit_logs.py) | `GET /audit-logs` | `audit_service` (shared SQLAlchemy engine) |
 | [routers/patients.py](../routers/patients.py) | Patient CRUD | **Inline SQL** in the handlers, audit rows via `audit.log_audit_event` |
-| [routers/providers.py](../routers/providers.py) | Provider CRUD | `provider_service` |
+| [routers/providers.py](../routers/providers.py) | Provider CRUD | `provider_service` (reads on the shared SQLAlchemy engine, writes on `get_connection()`) |
 | [routers/appointments.py](../routers/appointments.py) | Appointment create, read, list, update, cancel | `appointment_service` |
 | [routers/hl7.py](../routers/hl7.py) | `POST /hl7/adt` | `hl7_service` (with `hl7_tracking`) |
-| [routers/fhir.py](../routers/fhir.py) | CapabilityStatement, Patient, Practitioner, PractitionerRole | **Inline SQL** for Patient (plus identifier queries in `database.py`); `provider_service` for Practitioner and PractitionerRole |
+| [routers/fhir.py](../routers/fhir.py) | CapabilityStatement, Patient, Practitioner, PractitionerRole | **Inline SQL** for Patient (plus identifier queries in `database.py`); `provider_service` reads (shared SQLAlchemy engine) for Practitioner and PractitionerRole |
 
 Routers are plain `APIRouter` objects without prefixes or shared dependencies. Each
 route declares its own access rule, and no router imports `main` or another router.
@@ -58,13 +58,26 @@ Tests enforce these rules (see
   - Most operations open their own connection with `database.get_connection()` (psycopg 3,
     no pool, no connection timeout). Connection blocks commit when they finish normally
     and roll back when an exception escapes.
-  - The audit-log read (`audit_service`) uses the shared engine in `db_engine.py`: a
-    bounded pool (by default 5 connections plus 5 overflow, a 10 s wait for a free
-    connection, a 10 s connect timeout), each connection tested before use. Its
-    `connect()` blocks never commit: whatever they leave open is rolled back when the
-    connection returns to the pool. The audit read also runs in a transaction PostgreSQL
-    keeps read-only. Writes will use `begin()` blocks, which commit on success and roll
-    back on error.
+  - The audit-log read (`audit_service`) and the provider reads (`provider_service`:
+    list, lookup and search, also behind FHIR Practitioner and PractitionerRole) use the
+    shared engine in `db_engine.py`: a bounded pool (by default 5 connections plus 5
+    overflow, a 10 s wait for a free connection, a 10 s connect timeout), each connection
+    tested before use. They read through `db_engine.read_only_connection()`: one
+    transaction per call that PostgreSQL keeps read-only, never committed, rolled back
+    when the connection returns to the pool. Provider writes (create, update, delete)
+    still use `get_connection()`. Writes on the engine, when they move, will use
+    `begin()` blocks, which commit on success and roll back on error.
+  - Every engine transaction starts with a transaction-local `statement_timeout` and
+    `lock_timeout`: the configured limit (30 s and 5 s by default), or the session's own
+    value where that is stricter (0, "disabled", never counts as stricter). They end
+    with the transaction. They bound each statement's time in PostgreSQL and each wait
+    for a lock; there is no deadline for a whole request or transaction of several
+    statements, and they do not bound the wait for a free connection (pool timeout),
+    the connect timeout, or a network stall. `get_connection()` connections, and so all
+    writes, have none of these timeouts.
+  - Provider search runs its page and its total in one READ COMMITTED transaction, as
+    before: each statement sees the data committed when it starts, so a provider added
+    or removed in between can make the total disagree with the page.
   - The engine belongs to the process. It is created on first use, never at startup,
     and disposed at application shutdown; connections still checked out at that moment
     are not interrupted (see the ADR for the exact contract).
@@ -72,8 +85,9 @@ Tests enforce these rules (see
     most the number of worker processes × (pool size + overflow) connections; every
     connection opened through `get_connection()` comes on top, without a limit.
 - **SQL.** All values are passed as query parameters. The search and filter queries
-  (FHIR Patient search, provider search, appointment list) assemble their `WHERE` clause
-  from fixed fragments in the code; user input never becomes SQL text.
+  (FHIR Patient search, appointment list) assemble their `WHERE` clause from fixed
+  fragments in the code; provider search builds it with SQLAlchemy Core expressions and
+  bound parameters. User input never becomes SQL text.
 - **Constraints.** The schema enforces foreign keys, uniqueness (provider email,
   username, user email, patient identifier, HL7 message ID), value checks, and an
   exclusion constraint against overlapping scheduled appointments for a provider

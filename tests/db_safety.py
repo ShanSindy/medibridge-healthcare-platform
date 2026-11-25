@@ -51,6 +51,8 @@ CONNECTION_KEYS = (
     "DB_POOL_MAX_OVERFLOW",
     "DB_POOL_TIMEOUT_SECONDS",
     "DB_CONNECT_TIMEOUT_SECONDS",
+    "DB_STATEMENT_TIMEOUT_SECONDS",
+    "DB_LOCK_TIMEOUT_SECONDS",
 )
 REQUIRED_KEYS = ("DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "JWT_SECRET_KEY")
 
@@ -66,8 +68,8 @@ SUPERUSER_OVERRIDE_KEY = "TEST_DB_ALLOW_SUPERUSER"
 
 # libpq reads these from the environment even though every test connection passes
 # host, port, user, password and dbname explicitly. Inherited from the shell they
-# are refused before the first connection. Tests that need one (the concurrency
-# tests set PGOPTIONS) set it themselves, after this check.
+# are refused before the first connection. Tests that need one (the concurrency and
+# engine tests set PGOPTIONS) set it themselves, after this check.
 UNCONTROLLED_LIBPQ_VARIABLES = {
     "PGHOSTADDR": "sends connections to another address while the host still reads as DB_HOST",
     "PGSERVICE": "loads connection settings, such as hostaddr or options, from a service file",

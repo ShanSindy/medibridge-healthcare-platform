@@ -110,6 +110,7 @@ include = [
     "tests/db_safety.py",
     "tests/disposable_database.py",
     "tests/isolation_guard.py",
+    "tests/pg_helpers.py",
 ]
 # Combined line + branch coverage. Baseline measured before enforcement: 87.0%.
 fail_under = 85

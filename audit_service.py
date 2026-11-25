@@ -1,6 +1,6 @@
 from sqlalchemy import text
 
-from db_engine import get_engine
+from db_engine import read_only_connection
 
 # The pre-Phase 2 query, with named bind parameters in place of %s placeholders.
 AUDIT_LOG_PAGE = text(
@@ -27,11 +27,10 @@ def get_audit_logs(
     """
     Retrieve paginated audit event metadata.
 
-    Runs on a pooled connection from the shared engine (db_engine), in a transaction that
-    PostgreSQL itself keeps read-only (`postgresql_readonly`; any write fails with SQLSTATE
-    25006). The transaction is rolled back when the block ends, and the pool resets the
-    read-only setting before the connection is reused. Database errors propagate as
-    SQLAlchemy `DBAPIError` subclasses, with the original psycopg error in `.orig`.
+    Runs through db_engine.read_only_connection(): a pooled connection in a transaction
+    that PostgreSQL keeps read-only, with the engine's statement and lock timeouts, rolled
+    back when the block ends. Database errors propagate as SQLAlchemy `DBAPIError`
+    subclasses, with the original psycopg error in `.orig`.
     """
 
     if not 1 <= limit <= 100:
@@ -40,7 +39,6 @@ def get_audit_logs(
     if offset < 0:
         raise ValueError("offset must be non-negative")
 
-    with get_engine().connect() as conn:
-        conn.execution_options(postgresql_readonly=True)
+    with read_only_connection() as conn:
         rows = conn.execute(AUDIT_LOG_PAGE, {"limit": limit, "offset": offset}).mappings()
         return [dict(row) for row in rows]

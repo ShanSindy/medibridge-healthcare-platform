@@ -9,14 +9,25 @@ the test harness calls before it drops its database.
 
 Code that uses it owns each connection through a `with` block:
 
-    with get_engine().connect() as conn:  # reads; rolled back when the block ends
+    with read_only_connection() as conn:  # reads: PostgreSQL read-only, rolled back
         ...
-    with get_engine().begin() as conn:    # writes; committed, or rolled back on error
+    with get_engine().begin() as conn:    # writes (none yet): committed, or rolled back
         ...
 
 When the block ends the connection goes back to the pool, which rolls back anything
-still open before the connection is handed out again. Nothing is committed implicitly
-by `connect()`.
+still open before the connection is handed out again. Nothing is committed implicitly.
+
+Timeouts. Every transaction on the engine starts with a transaction-local
+`statement_timeout` and `lock_timeout`: the configured limit (`DB_STATEMENT_TIMEOUT_SECONDS`,
+default 30; `DB_LOCK_TIMEOUT_SECONDS`, default 5), or the session's own value where that is
+stricter (a positive value below the limit, for example from PGOPTIONS or a role setting;
+0, "disabled", never counts as stricter). They end with the transaction, so nothing
+carries over to the next user of a pooled connection, and the session's own values apply
+again afterwards. Each bounds one statement's time in PostgreSQL or one wait for a lock,
+not a whole transaction of several statements; they are separate from the pool's wait
+for a free connection and from the connect timeout, and they do not bound a network
+stall between the application and the server (there is no keepalive or read timeout).
+They need a transaction: under AUTOCOMMIT, which nothing here uses, they do not apply.
 
 `database.get_connection()` does not use this pool: it still opens a new psycopg
 connection for every call. Services move to the engine one at a time. The pool bounds
@@ -27,11 +38,12 @@ applies to each, and connections opened through `get_connection()` come on top.
 import os
 import re
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
-from sqlalchemy import URL, Engine, QueuePool, create_engine
+from sqlalchemy import URL, Connection, Engine, QueuePool, create_engine, event
 
 load_dotenv()
 
@@ -49,6 +61,12 @@ class PoolSettings:
     max_overflow: int
     timeout_seconds: int
     connect_timeout_seconds: int
+
+
+@dataclass(frozen=True)
+class TransactionTimeouts:
+    statement_seconds: int
+    lock_seconds: int
 
 
 def _whole_number(environ: Mapping[str, str], name: str, default: int, low: int, high: int) -> int:
@@ -106,6 +124,49 @@ def pool_settings(environ: Mapping[str, str]) -> PoolSettings:
     )
 
 
+def transaction_timeouts(environ: Mapping[str, str]) -> TransactionTimeouts:
+    """
+    PostgreSQL timeouts for every engine transaction, from the optional
+    `DB_STATEMENT_TIMEOUT_SECONDS` (1-300, default 30) and `DB_LOCK_TIMEOUT_SECONDS`
+    (1-60, default 5). Zero, PostgreSQL's "no limit", is not accepted.
+    """
+    return TransactionTimeouts(
+        statement_seconds=_whole_number(environ, "DB_STATEMENT_TIMEOUT_SECONDS", 30, 1, 300),
+        lock_seconds=_whole_number(environ, "DB_LOCK_TIMEOUT_SECONDS", 5, 1, 60),
+    )
+
+
+# Each timeout becomes the smaller of the configured limit and the session's current
+# value, unless that value is 0 (disabled). pg_settings.setting holds both as integers in
+# milliseconds, so no unit parsing is needed. The aggregate always yields exactly one row
+# (a missing setting reads as NULL and the configured limit applies). set_config(..., true)
+# is SET LOCAL: the values end with the transaction. One statement, so one round trip.
+_APPLY_TIMEOUTS = """
+SELECT
+    pg_catalog.set_config(
+        'statement_timeout',
+        (CASE WHEN current.statement_ms > 0
+              THEN least(current.statement_ms, %(statement_ms)s)
+              ELSE %(statement_ms)s END)::text,
+        true
+    ),
+    pg_catalog.set_config(
+        'lock_timeout',
+        (CASE WHEN current.lock_ms > 0
+              THEN least(current.lock_ms, %(lock_ms)s)
+              ELSE %(lock_ms)s END)::text,
+        true
+    )
+FROM (
+    SELECT
+        max(setting::bigint) FILTER (WHERE name = 'statement_timeout') AS statement_ms,
+        max(setting::bigint) FILTER (WHERE name = 'lock_timeout') AS lock_ms
+    FROM pg_catalog.pg_settings
+    WHERE name IN ('statement_timeout', 'lock_timeout')
+) AS current
+"""
+
+
 def build_engine(environ: Mapping[str, str]) -> Engine:
     """
     A new engine for the given settings. It opens no connection until first used.
@@ -113,7 +174,9 @@ def build_engine(environ: Mapping[str, str]) -> Engine:
     At most `size + max_overflow` connections are open at once. A caller that finds them
     all in use waits up to `timeout_seconds`, then gets `sqlalchemy.exc.TimeoutError`.
     Every connection is tested before it is handed out (`pool_pre_ping`), so one closed
-    by the server is replaced instead of failing the caller's first statement.
+    by the server is replaced instead of failing the caller's first statement. Every
+    transaction starts with the transaction-local timeouts from `transaction_timeouts`,
+    or the session's own where they are stricter.
 
     Statement parameters are left out of SQLAlchemy's error messages and logs
     (`hide_parameters`): they can hold patient data, and an unhandled error's message
@@ -121,7 +184,8 @@ def build_engine(environ: Mapping[str, str]) -> Engine:
     """
     url = database_url(environ)
     pool = pool_settings(environ)
-    return create_engine(
+    timeouts = transaction_timeouts(environ)
+    engine = create_engine(
         url,
         poolclass=QueuePool,
         pool_size=pool.size,
@@ -131,6 +195,17 @@ def build_engine(environ: Mapping[str, str]) -> Engine:
         connect_args={"connect_timeout": pool.connect_timeout_seconds},
         hide_parameters=True,
     )
+    values = {
+        "statement_ms": timeouts.statement_seconds * 1000,
+        "lock_ms": timeouts.lock_seconds * 1000,
+    }
+
+    @event.listens_for(engine, "begin")
+    def apply_transaction_timeouts(conn: Connection) -> None:
+        # Runs when a transaction begins, before its first statement.
+        conn.exec_driver_sql(_APPLY_TIMEOUTS, values).one()
+
+    return engine
 
 
 _engine: Engine | None = None
@@ -171,3 +246,20 @@ def dispose_engine() -> None:
         engine, _engine = _engine, None
     if engine is not None:
         engine.dispose()
+
+
+@contextmanager
+def read_only_connection() -> Iterator[Connection]:
+    """
+    A pooled connection for reads, in a transaction that PostgreSQL itself keeps
+    read-only (`postgresql_readonly`: any write fails with SQLSTATE 25006), with the
+    engine's statement and lock timeouts. Everything inside one block shares that
+    transaction (READ COMMITTED, PostgreSQL's default: each statement sees the data
+    committed when it starts). When the block ends, normally or by an exception, the
+    transaction is rolled back and the connection returns to the pool, which resets the
+    read-only setting. Results must be read inside the block. After a database error
+    inside the block, leave it rather than using the connection again.
+    """
+    with get_engine().connect() as conn:
+        conn.execution_options(postgresql_readonly=True)
+        yield conn

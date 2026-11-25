@@ -8,17 +8,13 @@ no engine and opens no connection when none exists.
 """
 
 import asyncio
-import time
 
-import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
 import db_engine
 import main
-from tests import db_safety
-
-WAIT_SECONDS = 10
+from tests.pg_helpers import backend_exists, verified_connection, wait_until
 
 
 class FakeEngine:
@@ -93,34 +89,16 @@ def test_a_shutdown_error_from_dispose_is_not_swallowed(monkeypatch):
     assert messages == ["lifespan.startup.complete", "lifespan.shutdown.failed"]
 
 
-def _backend_exists(conn, pid) -> bool:
-    return conn.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s", (pid,)).fetchone()
-
-
 def test_shutdown_closes_the_real_pools_idle_connections(disposable_database):
-    with psycopg.connect(
-        **disposable_database.config.connect_kwargs(disposable_database.name), autocommit=True
-    ) as observer:
-        found, role_oid = db_safety.fetch_identity(observer, disposable_database.name)
-        db_safety.check_identity(
-            session_name=disposable_database.name,
-            created=disposable_database.created,
-            found=found,
-            current_role_oid=role_oid,
-            require_marker=True,
-        )
-
+    with verified_connection(disposable_database) as observer:
         # The same path a server takes: TestClient as a context manager runs the lifespan.
         with TestClient(main.app):
             with db_engine.get_engine().connect() as conn:
                 pid = conn.exec_driver_sql("SELECT pg_backend_pid()").scalar_one()
-            assert _backend_exists(observer, pid)  # idle in the pool while the app runs
+            assert backend_exists(observer, pid)  # idle in the pool while the app runs
 
         assert db_engine._engine is None
-        deadline = time.monotonic() + WAIT_SECONDS
-        while _backend_exists(observer, pid) and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert not _backend_exists(observer, pid)
+        assert wait_until(lambda: not backend_exists(observer, pid))
 
     # The next use builds a new engine.
     with db_engine.get_engine().connect() as conn:

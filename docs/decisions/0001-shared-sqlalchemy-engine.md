@@ -128,10 +128,10 @@ unbounded, plus administrative tools. There is no global limit of 10.
   for example a unique-violation `DETAIL` names the duplicate key value, and an invalid
   input error quotes the input. The same is true on the psycopg path today.
 - Connection errors do not include the password.
-- There is no statement or read timeout and no TCP keepalive setting. A connect timeout
-  and a pool wait timeout bound how long a caller waits to get a connection, but a query
-  on a connection whose server stops responding can still wait for the operating
-  system's TCP timeout.
+- Statement and lock timeouts were added in the second slice (see the amendment
+  below). There is still no network read timeout and no TCP keepalive setting: a call on
+  a connection whose server stops responding can still wait for the operating system's
+  TCP timeout.
 
 Before write paths move to the engine:
 
@@ -171,3 +171,53 @@ Before write paths move to the engine:
 - The HL7 endpoint is `async` and calls the synchronous services directly, so database
   waits there block the event loop. That is true today; it matters more once those
   services wait on a bounded pool.
+
+## Amendment: provider reads and transaction timeouts (Phase 2, second slice)
+
+Status: proposed. Date: 2026-11-24.
+
+- **Second consumer.** `provider_service` reads (`get_all_providers`,
+  `get_provider_by_id`, `search_providers`, also used by FHIR Practitioner and
+  PractitionerRole) moved to the engine. Their SQL is built with SQLAlchemy Core
+  (`select()` on a lightweight `table()` of the selected columns; no ORM, no schema
+  metadata), with every value bound. Results, order, totals, keys and value types are
+  unchanged (tests compare them with the old SQL). Provider writes stay on
+  `get_connection()`, so the router's psycopg constraint handling is untouched.
+- **One read helper.** `db_engine.read_only_connection()` gives a pooled connection in a
+  PostgreSQL read-only transaction. Both consumers use it; reads never commit.
+- **Transaction timeouts.** Before more traffic moved onto the bounded pool, every engine
+  transaction got a `statement_timeout` and a `lock_timeout`, each the stricter of a
+  configured limit (`DB_STATEMENT_TIMEOUT_SECONDS`, default 30 s, 1-300;
+  `DB_LOCK_TIMEOUT_SECONDS`, default 5 s, 1-60) and the session's current value. A
+  session value of 0 means disabled and never counts as stricter. So the engine never
+  weakens a stricter limit already in force (from PGOPTIONS, a role or database setting),
+  and always applies its own where there is none.
+  - An engine `begin` listener applies them in one statement before the transaction's
+    first query. It reads the session's current values from `pg_settings.setting`, an
+    integer in milliseconds for both settings (asserted by a test), so no unit strings
+    such as `500ms` or `1min` are parsed, and sets the result with
+    `set_config(..., true)`, the equivalent of `SET LOCAL`. The statement always returns
+    exactly one row, so a missing setting cannot silently skip the policy. The values end with the transaction, committed or rolled
+    back, and the session's own values apply again. The cost is one extra round trip per
+    transaction.
+  - The timeouts apply per statement and per lock wait. There is no deadline for a
+    whole request: a transaction of several statements (search runs two) can take longer
+    than one timeout, and the pool wait, connection setup and network stalls come on
+    top. They do not apply under AUTOCOMMIT, which nothing uses: `set_config(..., true)`
+    has no effect outside a transaction.
+  - If applying them fails (for example on a broken connection), the error is raised
+    where the transaction begins: by the first statement in a `connect()` block, or by
+    `begin()` itself. That Connection must not be reused, because SQLAlchemy leaves it
+    without a transaction: leave the block, as every caller does, and the pool rolls the
+    connection back or replaces it.
+  - 30 s and 5 s are starting values, not measured under load. The reads touch small
+    tables (provider search is a full scan with prefix ILIKE), and a read waiting on a
+    lock is normally waiting for DDL or a TRUNCATE, which should not take seconds.
+  - Zero ("no limit") is refused. Nothing retries a cancelled statement; the error
+    propagates (SQLSTATE 57014 for a statement timeout, 55P03 for a lock timeout,
+    wrapped as `sqlalchemy.exc.OperationalError`) and the request fails with a plain 500.
+  - `get_connection()` connections, and so every write, keep their current behaviour
+    (no timeouts) until they move.
+- **Unchanged isolation.** Provider search runs its page and count in one READ COMMITTED
+  transaction, as before; they can disagree if providers change in between. A stronger
+  isolation level was not introduced.

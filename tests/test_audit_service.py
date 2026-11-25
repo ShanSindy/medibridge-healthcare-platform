@@ -22,7 +22,7 @@ import db_engine
 import main
 from audit_service import get_audit_logs
 from auth_dependencies import get_current_user
-from tests import db_safety
+from tests.pg_helpers import verified_connection
 
 FIELDS = ["id", "user_id", "action", "resource_type", "resource_id", "outcome", "created_at"]
 
@@ -38,21 +38,8 @@ DIRECT_QUERY = """
 @pytest.fixture
 def direct(disposable_database):
     """An autocommit psycopg connection, verified to be this session's database."""
-    conn = psycopg.connect(
-        **disposable_database.config.connect_kwargs(disposable_database.name), autocommit=True
-    )
-    try:
-        found, role_oid = db_safety.fetch_identity(conn, disposable_database.name)
-        db_safety.check_identity(
-            session_name=disposable_database.name,
-            created=disposable_database.created,
-            found=found,
-            current_role_oid=role_oid,
-            require_marker=True,
-        )
+    with verified_connection(disposable_database) as conn:
         yield conn
-    finally:
-        conn.close()
 
 
 def insert_event(conn, created_at, resource_id, details=None) -> int:
@@ -192,7 +179,7 @@ def test_the_read_only_setting_does_not_outlive_the_read(monkeypatch, direct):
     engine = db_engine.build_engine(
         {**os.environ, "DB_POOL_SIZE": "1", "DB_POOL_MAX_OVERFLOW": "0"}
     )
-    monkeypatch.setattr(audit_service, "get_engine", lambda: engine)
+    monkeypatch.setattr(db_engine, "_engine", engine)
     try:
         get_audit_logs()
         with engine.begin() as conn:
@@ -247,10 +234,10 @@ def test_get_audit_logs_rejects_invalid_pagination(
     limit,
     offset,
 ):
-    with patch("audit_service.get_engine") as mock_get_engine:
+    with patch("audit_service.read_only_connection") as mock_connection:
         with pytest.raises(
             ValueError, match=r"^(limit must be between 1 and 100|offset must be non-negative)$"
         ):
             get_audit_logs(limit=limit, offset=offset)
 
-        mock_get_engine.assert_not_called()
+        mock_connection.assert_not_called()
