@@ -9,7 +9,9 @@ is one of the test's own pooled connections, after checking that it belongs to t
 session's database.
 
 Waits are bounded: the pool timeout is 1-3 seconds, barriers and joins have explicit
-timeouts, and `wait_until` polls a condition for at most WAIT_SECONDS.
+timeouts, and `wait_until` polls a condition for at most WAIT_SECONDS. Tests that hold a
+table lock also bound the holder itself (idle_in_transaction_session_timeout), so the
+server ends it and releases the lock even if the engine's timeout policy were broken.
 """
 
 import logging
@@ -25,6 +27,7 @@ from sqlalchemy import exc as sa_exc
 
 import db_engine
 from tests import db_safety
+from tests.pg_helpers import backend_exists, verified_connection, verify_identity, wait_until
 
 WAIT_SECONDS = 10
 SETTINGS = {
@@ -34,15 +37,6 @@ SETTINGS = {
     "DB_USER": "medibridge_app",
     "DB_PASSWORD": "synthetic-password-not-a-secret",
 }
-
-
-def wait_until(condition, seconds=WAIT_SECONDS):
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if condition():
-            return True
-        time.sleep(0.05)
-    return condition()
 
 
 # --- settings (no connections) ----------------------------------------------------------
@@ -192,6 +186,37 @@ def test_pool_settings_out_of_range_are_rejected(name, value, message):
     assert str(raised.value) == message
 
 
+def test_transaction_timeout_defaults():
+    assert db_engine.transaction_timeouts({}) == db_engine.TransactionTimeouts(
+        statement_seconds=30, lock_seconds=5
+    )
+
+
+def test_transaction_timeouts_are_read():
+    settings = {"DB_STATEMENT_TIMEOUT_SECONDS": "12", "DB_LOCK_TIMEOUT_SECONDS": " 2 "}
+
+    assert db_engine.transaction_timeouts(settings) == db_engine.TransactionTimeouts(
+        statement_seconds=12, lock_seconds=2
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        # 0 would mean "no limit" in PostgreSQL.
+        ("DB_STATEMENT_TIMEOUT_SECONDS", "0", "between 1 and 300"),
+        ("DB_STATEMENT_TIMEOUT_SECONDS", "301", "between 1 and 300"),
+        ("DB_STATEMENT_TIMEOUT_SECONDS", "30s", "a whole number"),
+        ("DB_LOCK_TIMEOUT_SECONDS", "0", "between 1 and 60"),
+        ("DB_LOCK_TIMEOUT_SECONDS", "61", "between 1 and 60"),
+        ("DB_LOCK_TIMEOUT_SECONDS", "-5", "between 1 and 60"),
+    ],
+)
+def test_transaction_timeouts_out_of_range_are_rejected(name, value, message):
+    with pytest.raises(db_engine.DatabaseConfigurationError, match=f"^{name} must be {message}"):
+        db_engine.transaction_timeouts({name: value})
+
+
 def test_build_engine_applies_the_pool_settings_without_connecting():
     engine = db_engine.build_engine(
         {
@@ -282,25 +307,8 @@ def test_dispose_engine_disposes_and_forgets_the_engine(fresh_singleton):
 @pytest.fixture
 def direct(disposable_database):
     """An autocommit psycopg connection, verified to be this session's database."""
-    conn = psycopg.connect(
-        **disposable_database.config.connect_kwargs(disposable_database.name), autocommit=True
-    )
-    try:
-        verify_identity(conn, disposable_database)
+    with verified_connection(disposable_database) as conn:
         yield conn
-    finally:
-        conn.close()
-
-
-def verify_identity(conn, disposable_database):
-    found, role_oid = db_safety.fetch_identity(conn, disposable_database.name)
-    db_safety.check_identity(
-        session_name=disposable_database.name,
-        created=disposable_database.created,
-        found=found,
-        current_role_oid=role_oid,
-        require_marker=True,
-    )
 
 
 @pytest.fixture
@@ -308,13 +316,14 @@ def small_engine(disposable_database):
     """Builds engines for this session's database with the given pool limits; disposes them."""
     engines = []
 
-    def build(size, max_overflow=0, timeout_seconds=3):
+    def build(size, max_overflow=0, timeout_seconds=3, **settings):
         engine = db_engine.build_engine(
             {
                 **os.environ,
                 "DB_POOL_SIZE": str(size),
                 "DB_POOL_MAX_OVERFLOW": str(max_overflow),
                 "DB_POOL_TIMEOUT_SECONDS": str(timeout_seconds),
+                **settings,
             }
         )
         engines.append(engine)
@@ -330,10 +339,6 @@ def small_engine(disposable_database):
 
 def backend_pid(conn) -> int:
     return conn.exec_driver_sql("SELECT pg_backend_pid()").scalar_one()
-
-
-def backend_exists(direct, pid) -> bool:
-    return direct.execute("SELECT 1 FROM pg_stat_activity WHERE pid = %s", (pid,)).fetchone()
 
 
 def audit_rows(direct) -> int:
@@ -580,3 +585,296 @@ def test_an_unreachable_server_fails_with_an_operational_error_in_bounded_time()
         engine.dispose()
 
     assert time.monotonic() - started < WAIT_SECONDS
+
+
+# --- transaction timeouts and read-only connections --------------------------------------
+
+TIMEOUTS = "SELECT current_setting('statement_timeout'), current_setting('lock_timeout')"
+
+
+def lock_with_bounded_holder(holder) -> None:
+    """
+    Takes an exclusive lock on audit_logs in `holder`'s transaction. The holder's own
+    idle_in_transaction_session_timeout makes the server end it, and so release the lock,
+    after 15 s even if nothing else stops the waiting statement: the bound does not
+    depend on the engine code under test.
+    """
+    holder.execute("SET idle_in_transaction_session_timeout = '15s'")
+    holder.execute("LOCK TABLE audit_logs IN ACCESS EXCLUSIVE MODE")
+
+
+def session_timeouts(engine) -> tuple[str, str]:
+    """The timeouts on the next pooled connection outside any engine transaction."""
+    raw = engine.raw_connection()  # bypasses Connection, so no "begin" event runs
+    try:
+        cursor = raw.cursor()
+        cursor.execute(TIMEOUTS)
+        values = cursor.fetchone()
+        raw.rollback()
+        return values
+    finally:
+        raw.close()
+
+
+def test_every_engine_transaction_gets_the_default_timeouts(small_engine):
+    engine = small_engine(size=1)
+
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql(TIMEOUTS).one() == ("30s", "5s")
+    with engine.begin() as conn:
+        assert conn.exec_driver_sql(TIMEOUTS).one() == ("30s", "5s")
+
+
+def test_configured_timeouts_apply(small_engine):
+    engine = small_engine(size=1, DB_STATEMENT_TIMEOUT_SECONDS="7", DB_LOCK_TIMEOUT_SECONDS="2")
+
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql(TIMEOUTS).one() == ("7s", "2s")
+
+
+def test_timeouts_end_with_the_transaction(small_engine, direct):
+    engine = small_engine(size=1)
+    server_defaults = direct.execute(TIMEOUTS).fetchone()
+    assert server_defaults != ("30s", "5s")
+
+    with engine.connect() as conn:
+        pid = backend_pid(conn)
+        assert conn.exec_driver_sql(TIMEOUTS).one() == ("30s", "5s")
+
+    raw = engine.raw_connection()
+    try:
+        assert raw.driver_connection.info.backend_pid == pid  # the same pooled connection
+    finally:
+        raw.close()
+    assert session_timeouts(engine) == server_defaults
+
+    # A rolled-back transaction would undo even a session-level SET, so the decisive case
+    # is a committed one: the timeouts must still end with it.
+    with engine.begin() as conn:
+        assert conn.exec_driver_sql(TIMEOUTS).one() == ("30s", "5s")
+    assert session_timeouts(engine) == server_defaults
+
+
+def test_test_owned_session_settings_survive_engine_transactions(small_engine, monkeypatch):
+    # PGOPTIONS set by a test (as the concurrency tests do) is a session setting. Being
+    # stricter than the limits, it stays in force inside engine transactions, and it is
+    # still in place afterwards.
+    monkeypatch.setenv("PGOPTIONS", "-c statement_timeout=12345ms -c lock_timeout=2345ms")
+    engine = small_engine(size=1)
+
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql(TIMEOUTS).one() == ("12345ms", "2345ms")
+    assert session_timeouts(engine) == ("12345ms", "2345ms")
+
+
+def test_the_statement_timeout_cancels_a_long_statement(small_engine):
+    engine = small_engine(size=1, DB_STATEMENT_TIMEOUT_SECONDS="1")
+
+    started = time.monotonic()
+    with engine.connect() as conn, pytest.raises(sa_exc.OperationalError) as raised:
+        conn.exec_driver_sql("SELECT pg_sleep(5)")
+
+    assert isinstance(raised.value.orig, psycopg.errors.QueryCanceled)
+    assert time.monotonic() - started < 4
+    with engine.connect() as conn:  # the connection is usable again
+        assert conn.exec_driver_sql("SELECT 1").scalar_one() == 1
+
+
+def test_the_lock_timeout_stops_waiting_for_a_locked_table(
+    small_engine, disposable_database, monkeypatch
+):
+    # Backstop, so this test cannot hang if the policy ever stops being applied: a
+    # session-level statement_timeout (the transaction-local one replaces it while the
+    # policy works). The assertions below still require the lock timeout itself.
+    monkeypatch.setenv("PGOPTIONS", "-c statement_timeout=10s")
+    engine = small_engine(size=1, DB_LOCK_TIMEOUT_SECONDS="1", DB_STATEMENT_TIMEOUT_SECONDS="10")
+    holder = psycopg.connect(**disposable_database.config.connect_kwargs(disposable_database.name))
+    try:
+        verify_identity(holder, disposable_database)
+        assert session_timeouts(engine)[1] == "0"  # so only the configured 1 s can apply
+        lock_with_bounded_holder(holder)
+
+        started = time.monotonic()
+        with engine.connect() as conn, pytest.raises(sa_exc.OperationalError) as raised:
+            conn.exec_driver_sql("SELECT count(*) FROM audit_logs")
+        waited = time.monotonic() - started
+    finally:
+        holder.close()  # ends its transaction and releases the lock
+
+    assert isinstance(raised.value.orig, psycopg.errors.LockNotAvailable)
+    assert waited < 4
+
+
+def test_read_only_connection_refuses_writes_and_does_not_leak_read_only(
+    small_engine, monkeypatch, direct
+):
+    engine = small_engine(size=1)
+    monkeypatch.setattr(db_engine, "_engine", engine)
+
+    with db_engine.read_only_connection() as conn:
+        assert conn.exec_driver_sql("SHOW transaction_read_only").scalar_one() == "on"
+        assert conn.exec_driver_sql(TIMEOUTS).one() == ("30s", "5s")
+        with pytest.raises(sa_exc.InternalError) as raised:
+            conn.exec_driver_sql(INSERT_EVENT)
+    assert isinstance(raised.value.orig, psycopg.errors.ReadOnlySqlTransaction)
+
+    with engine.begin() as conn:  # the same, only, pooled connection
+        conn.exec_driver_sql(INSERT_EVENT)
+    assert audit_rows(direct) == 1
+    assert engine.pool.checkedout() == 0
+
+
+def test_read_only_connection_returns_its_connection_when_the_block_fails(
+    small_engine, monkeypatch
+):
+    engine = small_engine(size=1)
+    monkeypatch.setattr(db_engine, "_engine", engine)
+
+    class Failure(Exception):
+        pass
+
+    def read_then_fail():
+        with db_engine.read_only_connection() as conn:
+            conn.exec_driver_sql("SELECT 1")
+            raise Failure
+
+    with pytest.raises(Failure):
+        read_then_fail()
+
+    assert engine.pool.checkedout() == 0
+
+
+# --- the timeout policy against existing session settings --------------------------------
+
+# Session settings (as from PGOPTIONS or a role setting), and what an engine transaction
+# with the default limits (30 s, 5 s) must use: the stricter positive value of the two.
+SESSION_CASES = {
+    "disabled": ("0", "0", ("30s", "5s")),
+    "stricter": ("2s", "1s", ("2s", "1s")),
+    "less-strict": ("60s", "20s", ("30s", "5s")),
+    "equal": ("30s", "5s", ("30s", "5s")),
+    "subsecond": ("500ms", "250ms", ("500ms", "250ms")),
+    "minutes": ("1min", "1min", ("30s", "5s")),
+    "statement-only-stricter": ("2s", "0", ("2s", "5s")),
+    "lock-only-stricter": ("0", "1500ms", ("30s", "1500ms")),
+}
+
+
+@pytest.mark.parametrize(
+    ("statement", "lock", "effective"), SESSION_CASES.values(), ids=SESSION_CASES.keys()
+)
+def test_the_stricter_of_the_limit_and_the_session_setting_applies(
+    small_engine, monkeypatch, statement, lock, effective
+):
+    monkeypatch.setenv("PGOPTIONS", f"-c statement_timeout={statement} -c lock_timeout={lock}")
+    engine = small_engine(size=1)
+    session = session_timeouts(engine)
+
+    with engine.connect() as conn:  # rolled back
+        assert conn.exec_driver_sql(TIMEOUTS).one() == effective
+    assert session_timeouts(engine) == session
+    with engine.begin() as conn:  # committed
+        assert conn.exec_driver_sql(TIMEOUTS).one() == effective
+    assert session_timeouts(engine) == session
+
+
+def test_timeout_settings_are_whole_milliseconds(direct):
+    # The policy compares pg_settings.setting numerically; that relies on this unit.
+    units = direct.execute(
+        "SELECT name, unit, vartype FROM pg_settings "
+        "WHERE name IN ('statement_timeout', 'lock_timeout') ORDER BY name"
+    ).fetchall()
+    assert units == [("lock_timeout", "ms", "integer"), ("statement_timeout", "ms", "integer")]
+
+
+def test_a_stricter_session_statement_timeout_still_cancels(small_engine, monkeypatch):
+    monkeypatch.setenv("PGOPTIONS", "-c statement_timeout=500ms")
+    engine = small_engine(size=1)  # configured limit 30 s
+
+    started = time.monotonic()
+    with engine.connect() as conn, pytest.raises(sa_exc.OperationalError) as raised:
+        conn.exec_driver_sql("SELECT pg_sleep(3)")
+
+    assert isinstance(raised.value.orig, psycopg.errors.QueryCanceled)
+    assert time.monotonic() - started < 2.5
+
+
+def test_a_stricter_session_lock_timeout_still_stops_the_wait(
+    small_engine, disposable_database, monkeypatch
+):
+    # Session lock_timeout 1 s, configured limit 5 s; statement_timeout 10 s as a backstop.
+    monkeypatch.setenv("PGOPTIONS", "-c lock_timeout=1s -c statement_timeout=10s")
+    engine = small_engine(size=1)
+    holder = psycopg.connect(**disposable_database.config.connect_kwargs(disposable_database.name))
+    try:
+        verify_identity(holder, disposable_database)
+        lock_with_bounded_holder(holder)
+
+        started = time.monotonic()
+        with engine.connect() as conn, pytest.raises(sa_exc.OperationalError) as raised:
+            conn.exec_driver_sql("SELECT count(*) FROM audit_logs")
+        waited = time.monotonic() - started
+    finally:
+        holder.close()  # ends its transaction and releases the lock
+
+    assert isinstance(raised.value.orig, psycopg.errors.LockNotAvailable)
+    assert waited < 4  # well below the 5 s configured limit
+
+
+def test_a_failure_to_apply_the_timeouts_propagates_and_the_pool_recovers(
+    small_engine, monkeypatch
+):
+    engine = small_engine(size=1)
+    with engine.connect() as conn:
+        pid = backend_pid(conn)
+
+    def read():
+        with engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")
+
+    with monkeypatch.context() as patch:
+        # Fault injection: the listener's statement fails in PostgreSQL.
+        patch.setattr(db_engine, "_APPLY_TIMEOUTS", "SELECT 1 / 0")
+        with pytest.raises(sa_exc.DataError) as raised:
+            read()
+    assert isinstance(raised.value.orig, psycopg.errors.DivisionByZero)
+    assert engine.pool.checkedout() == 0
+
+    with engine.connect() as conn:  # the same pooled connection, usable and policed again
+        assert backend_pid(conn) == pid
+        assert conn.exec_driver_sql(TIMEOUTS).one() == ("30s", "5s")
+
+
+@pytest.mark.parametrize(
+    ("session", "effective"),
+    [("10s", "7s"), ("2s", "2s"), ("0", "7s")],
+    ids=["session-looser", "session-stricter", "session-disabled"],
+)
+def test_a_configured_limit_combines_with_the_session_value(
+    small_engine, monkeypatch, session, effective
+):
+    monkeypatch.setenv("PGOPTIONS", f"-c statement_timeout={session}")
+    engine = small_engine(size=1, DB_STATEMENT_TIMEOUT_SECONDS="7")
+
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql(TIMEOUTS).one()[0] == effective
+
+
+def test_the_current_session_value_counts_not_the_connection_default(small_engine):
+    # A committed session-level SET changes the current value but not the connection's
+    # reset value; the policy must use the current one.
+    engine = small_engine(size=1)
+    raw = engine.raw_connection()
+    try:
+        cursor = raw.cursor()
+        cursor.execute("SET statement_timeout = '2s'")
+        raw.commit()
+    finally:
+        raw.close()
+
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql(TIMEOUTS).one()[0] == "2s"
+        reset = conn.exec_driver_sql(
+            "SELECT reset_val FROM pg_settings WHERE name = 'statement_timeout'"
+        ).scalar_one()
+    assert reset != "2000"

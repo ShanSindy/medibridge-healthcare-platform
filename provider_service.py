@@ -1,5 +1,31 @@
+"""
+Provider persistence.
+
+Reads (get_all_providers, get_provider_by_id, search_providers) use the shared
+SQLAlchemy engine through db_engine.read_only_connection(): PostgreSQL read-only
+transactions with the engine's statement and lock timeouts. Writes (create, update,
+delete) still use database.get_connection(), unchanged; the providers router translates
+their psycopg constraint errors.
+"""
+
+from sqlalchemy import bindparam, column, func, select, table
+
 from database import get_connection
+from db_engine import read_only_connection
 from models import ProviderCreate
+
+# The columns the reads select, in the order of the returned dictionaries. Untyped, so
+# values come back exactly as psycopg returns them, as before.
+PROVIDERS = table(
+    "providers",
+    column("id"),
+    column("first_name"),
+    column("last_name"),
+    column("specialty"),
+    column("email"),
+    column("phone"),
+    column("created_at"),
+)
 
 
 def create_provider(provider: ProviderCreate) -> dict:
@@ -53,37 +79,10 @@ def get_all_providers() -> list[dict]:
     """
     Retrieve all healthcare providers.
     """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    id,
-                    first_name,
-                    last_name,
-                    specialty,
-                    email,
-                    phone,
-                    created_at
-                FROM providers
-                ORDER BY id
-                """
-            )
+    with read_only_connection() as conn:
+        rows = conn.execute(select(PROVIDERS).order_by(PROVIDERS.c.id)).mappings().all()
 
-            rows = cur.fetchall()
-
-    return [
-        {
-            "id": row[0],
-            "first_name": row[1],
-            "last_name": row[2],
-            "specialty": row[3],
-            "email": row[4],
-            "phone": row[5],
-            "created_at": row[6],
-        }
-        for row in rows
-    ]
+    return [dict(row) for row in rows]
 
 
 def get_provider_by_id(provider_id: int) -> dict | None:
@@ -91,38 +90,12 @@ def get_provider_by_id(provider_id: int) -> dict | None:
     Retrieve a healthcare provider by ID.
     Returns None if the provider does not exist.
     """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT
-                    id,
-                    first_name,
-                    last_name,
-                    specialty,
-                    email,
-                    phone,
-                    created_at
-                FROM providers
-                WHERE id = %s
-                """,
-                (provider_id,),
-            )
+    query = select(PROVIDERS).where(PROVIDERS.c.id == bindparam("provider_id"))
 
-            row = cur.fetchone()
+    with read_only_connection() as conn:
+        row = conn.execute(query, {"provider_id": provider_id}).mappings().one_or_none()
 
-    if row is None:
-        return None
-
-    return {
-        "id": row[0],
-        "first_name": row[1],
-        "last_name": row[2],
-        "specialty": row[3],
-        "email": row[4],
-        "phone": row[5],
-        "created_at": row[6],
-    }
+    return dict(row) if row is not None else None
 
 
 def update_provider(
@@ -210,69 +183,46 @@ def search_providers(
     offset: int = 0,
     specialty: str | None = None,
 ) -> tuple[list[dict], int]:
-    """Search providers with filters and database pagination."""
+    """
+    Search providers with filters and database pagination.
+
+    Each given filter is a case-insensitive prefix match (ILIKE), with `%`, `_` and backslash
+    in the value matched literally. Returns one page ordered by id and the total number
+    of matches. Both queries run in one read-only READ COMMITTED transaction, as before:
+    each sees the data committed when it starts, so a provider created or deleted between
+    them can make the total differ from what the page shows.
+    """
 
     def prefix_pattern(value: str) -> str:
         escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         return f"{escaped}%"
 
     conditions = []
-    params = []
+    params: dict[str, object] = {}
 
     if family is not None:
-        conditions.append("last_name ILIKE %s")
-        params.append(prefix_pattern(family))
+        conditions.append(PROVIDERS.c.last_name.ilike(bindparam("family")))
+        params["family"] = prefix_pattern(family)
 
     if given is not None:
-        conditions.append("first_name ILIKE %s")
-        params.append(prefix_pattern(given))
+        conditions.append(PROVIDERS.c.first_name.ilike(bindparam("given")))
+        params["given"] = prefix_pattern(given)
 
     if specialty is not None:
-        conditions.append("specialty ILIKE %s")
-        params.append(prefix_pattern(specialty))
+        conditions.append(PROVIDERS.c.specialty.ilike(bindparam("specialty")))
+        params["specialty"] = prefix_pattern(specialty)
 
-    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
+    page = (
+        select(PROVIDERS)
+        .where(*conditions)
+        .order_by(PROVIDERS.c.id)
+        .limit(bindparam("limit"))
+        .offset(bindparam("offset"))
+    )
+    matches = select(func.count()).select_from(PROVIDERS).where(*conditions)
 
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            # S608 reviewed: the WHERE clause is assembled only from fixed SQL fragments in this
-            # function, and every user-supplied value is passed separately as a %s parameter.
-            cur.execute(
-                f"""
-                SELECT
-                    id, first_name, last_name,
-                    specialty, email, phone, created_at
-                FROM providers
-                {where_clause}
-                ORDER BY id
-                LIMIT %s OFFSET %s
-                """,  # noqa: S608
-                (*params, count, offset),
-            )
-            rows = cur.fetchall()
+    with read_only_connection() as conn:
+        rows = conn.execute(page, {**params, "limit": count, "offset": offset}).mappings().all()
+        total = conn.execute(matches, params).scalar_one()
 
-            # S608 reviewed: same fixed WHERE fragments and parameters as above.
-            cur.execute(
-                f"""
-                SELECT COUNT(*)
-                FROM providers
-                {where_clause}
-                """,  # noqa: S608
-                tuple(params),
-            )
-            total = cur.fetchone()[0]
-
-    providers = [
-        {
-            "id": row[0],
-            "first_name": row[1],
-            "last_name": row[2],
-            "specialty": row[3],
-            "email": row[4],
-            "phone": row[5],
-            "created_at": row[6],
-        }
-        for row in rows
-    ]
-
-    return providers, total
+    return [dict(row) for row in rows], total

@@ -83,9 +83,25 @@ database still exists). If closing the pool fails, the identity-checked drop sti
 the failure is reported afterwards. `tests/test_db_engine.py` checks the engine's settings, pool limits,
 reuse, the wait for a free connection, rollback, hidden statement parameters, replacement
 of server-closed connections and disposal, on separate small engines verified to be
-connected to this run's database. The optional `DB_POOL_*` and
-`DB_CONNECT_TIMEOUT_SECONDS` settings are handled like the other connection settings: from
-`.env.test` when it exists, otherwise from the environment.
+connected to this run's database, and the transaction timeouts: that each is the
+stricter of the limit and the session's own value (disabled, stricter, less strict,
+equal, subsecond and minute values, each timeout independently), that they end with a
+rolled-back or committed transaction, that they cancel a long statement and stop a lock
+wait, that a failure to apply them propagates and leaves the pool usable, and that a
+test's own `PGOPTIONS` session settings stay in force. Tests that hold a table lock bound
+the holder itself with `idle_in_transaction_session_timeout`, so the server ends it and
+releases the lock even if the engine's policy were removed or wrong, and they set a
+session `statement_timeout` as a second bound.
+`tests/test_provider_reads.py` compares every provider read with the pre-Phase 2 SQL run
+through psycopg (rows, order, totals, keys, value types, adversarial search values),
+checks the read-only transaction and connection release, a plain 500 when the pool is
+exhausted (a one-connection pool with a 1 s wait; this is not a load test), the FHIR
+resources and bundles, and provider writes through `get_connection()` alongside pooled
+reads. The optional `DB_POOL_*`, `DB_CONNECT_TIMEOUT_SECONDS`,
+`DB_STATEMENT_TIMEOUT_SECONDS` and `DB_LOCK_TIMEOUT_SECONDS` settings are handled like
+the other connection settings: from `.env.test` when it exists, otherwise from the
+environment. `tests/pg_helpers.py` holds the identity-checked connection and polling
+helpers these modules share.
 
 | Module | What it checks | Tests |
 |---|---|---|
@@ -271,8 +287,8 @@ and database explicitly, but libpq still reads some variables from the environme
 `DB_HOST`, `PGSERVICE` loads settings (such as `hostaddr` or `options`) from a service file,
 and `PGOPTIONS` sets session parameters such as `search_path` on every connection. A run
 that inherits any of these three, even empty, stops before its first connection with an
-error that names the variable. Tests that need one set it themselves (the concurrency tests
-set `PGOPTIONS` for their timeouts). Other `PG*` variables are accepted: the explicit
+error that names the variable. Tests that need one set it themselves (the concurrency and
+engine tests set `PGOPTIONS` for their timeouts). Other `PG*` variables are accepted: the explicit
 settings override `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD`; a password
 file is not consulted when a password is given; `PGSERVICEFILE` and `PGSYSCONFDIR` only
 matter together with `PGSERVICE`; transport, timing and display settings such as
