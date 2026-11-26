@@ -21,7 +21,7 @@ connections, if a request ever created the engine.
 | [routers/audit_logs.py](../routers/audit_logs.py) | `GET /audit-logs` | `audit_service` (shared SQLAlchemy engine) |
 | [routers/patients.py](../routers/patients.py) | Patient CRUD | **Inline SQL** in the handlers, audit rows via `audit.log_audit_event` |
 | [routers/providers.py](../routers/providers.py) | Provider CRUD | `provider_service` (reads on the shared SQLAlchemy engine, writes on `get_connection()`) |
-| [routers/appointments.py](../routers/appointments.py) | Appointment create, read, list, update, cancel | `appointment_service` |
+| [routers/appointments.py](../routers/appointments.py) | Appointment create, read, list, update, cancel | `appointment_service` (reads on the shared SQLAlchemy engine, writes on `get_connection()`) |
 | [routers/hl7.py](../routers/hl7.py) | `POST /hl7/adt` | `hl7_service` (with `hl7_tracking`) |
 | [routers/fhir.py](../routers/fhir.py) | CapabilityStatement, Patient, Practitioner, PractitionerRole | **Inline SQL** for Patient (plus identifier queries in `database.py`); `provider_service` reads (shared SQLAlchemy engine) for Practitioner and PractitionerRole |
 
@@ -58,15 +58,18 @@ Tests enforce these rules (see
   - Most operations open their own connection with `database.get_connection()` (psycopg 3,
     no pool, no connection timeout). Connection blocks commit when they finish normally
     and roll back when an exception escapes.
-  - The audit-log read (`audit_service`) and the provider reads (`provider_service`:
-    list, lookup and search, also behind FHIR Practitioner and PractitionerRole) use the
-    shared engine in `db_engine.py`: a bounded pool (by default 5 connections plus 5
-    overflow, a 10 s wait for a free connection, a 10 s connect timeout), each connection
-    tested before use. They read through `db_engine.read_only_connection()`: one
-    transaction per call that PostgreSQL keeps read-only, never committed, rolled back
-    when the connection returns to the pool. Provider writes (create, update, delete)
-    still use `get_connection()`. Writes on the engine, when they move, will use
-    `begin()` blocks, which commit on success and roll back on error.
+  - The audit-log read (`audit_service`), the provider reads (`provider_service`:
+    list, lookup and search, also behind FHIR Practitioner and PractitionerRole) and the
+    appointment reads (`appointment_service`: list with its optional patient, provider
+    and status filters, and lookup) use the shared engine in `db_engine.py`: a bounded
+    pool (by default 5 connections plus 5 overflow, a 10 s wait for a free connection, a
+    10 s connect timeout), each connection tested before use. They read through
+    `db_engine.read_only_connection()`: one transaction per call that PostgreSQL keeps
+    read-only, never committed, rolled back when the connection returns to the pool. Provider writes (create, update, delete)
+    and appointment writes (create, update, cancel) still use `get_connection()`, so the
+    overlap rule from migration 005 and its 409 handling are unchanged. Writes on the
+    engine, when they move, will use `begin()` blocks, which commit on success and roll
+    back on error.
   - Every engine transaction starts with a transaction-local `statement_timeout` and
     `lock_timeout`: the configured limit (30 s and 5 s by default), or the session's own
     value where that is stricter (0, "disabled", never counts as stricter). They end
@@ -74,7 +77,9 @@ Tests enforce these rules (see
     for a lock; there is no deadline for a whole request or transaction of several
     statements, and they do not bound the wait for a free connection (pool timeout),
     the connect timeout, or a network stall. `get_connection()` connections, and so all
-    writes, have none of these timeouts.
+    writes (appointment writes included), do not inherit this application-configured,
+    transaction-local policy; existing PostgreSQL server or session timeout settings
+    may still apply to them.
   - Provider search runs its page and its total in one READ COMMITTED transaction, as
     before: each statement sees the data committed when it starts, so a provider added
     or removed in between can make the total disagree with the page.

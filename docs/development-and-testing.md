@@ -97,11 +97,20 @@ through psycopg (rows, order, totals, keys, value types, adversarial search valu
 checks the read-only transaction and connection release, a plain 500 when the pool is
 exhausted (a one-connection pool with a 1 s wait; this is not a load test), the FHIR
 resources and bundles, and provider writes through `get_connection()` alongside pooled
-reads. The optional `DB_POOL_*`, `DB_CONNECT_TIMEOUT_SECONDS`,
+reads. `tests/test_appointment_reads.py` does the same for the appointment reads with
+fixed expected results (order by start time then id, each filter and their combinations,
+`0` and empty values as real filters, case-sensitive status, timezone-aware values), the
+return contract (a plain list of plain dicts, or a plain dict or `None`, every row read
+before the connection is released), the REST responses and validation, and appointment
+writes through `get_connection()` before
+pooled reads, including a rejected overlapping booking. The overlap rules themselves stay
+in `tests/test_pg_appointments.py`. The optional `DB_POOL_*`, `DB_CONNECT_TIMEOUT_SECONDS`,
 `DB_STATEMENT_TIMEOUT_SECONDS` and `DB_LOCK_TIMEOUT_SECONDS` settings are handled like
 the other connection settings: from `.env.test` when it exists, otherwise from the
 environment. `tests/pg_helpers.py` holds the identity-checked connection and polling
-helpers these modules share.
+helpers these modules share; `tests/test_pg_helpers.py` checks that its identity check
+refuses a connection attached to any other database, and that a refused engine is
+disposed.
 
 | Module | What it checks | Tests |
 |---|---|---|

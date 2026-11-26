@@ -233,7 +233,7 @@ database can be loaded with reproducible synthetic records using `seed_demo_data
 
 | Phase | Focus, including known backlog items |
 |---|---|
-| 2. Database modernization | SQLAlchemy Core and Alembic, one service at a time; connection timeouts and pooling. Started: shared engine and pool with statement and lock timeouts, used by the audit-log and provider reads ([ADR 0001](docs/decisions/0001-shared-sqlalchemy-engine.md)) |
+| 2. Database modernization | SQLAlchemy Core and Alembic, one service at a time; connection timeouts and pooling. Started: shared engine and pool with statement and lock timeouts, used by the audit-log, provider and appointment reads ([ADR 0001](docs/decisions/0001-shared-sqlalchemy-engine.md)) |
 | 3. API enhancement | Pagination and search for REST lists |
 | 4. Healthcare interoperability | HL7 version validation; consistent FHIR content types, errors and absolute links |
 | 5. Security and audit foundations | Broader audit coverage; login rate limiting and other authentication hardening |

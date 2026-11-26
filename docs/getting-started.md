@@ -120,7 +120,7 @@ cp .env.example .env               # POSIX shell
 | `DB_STATEMENT_TIMEOUT_SECONDS`, `DB_LOCK_TIMEOUT_SECONDS` | No | Upper limits for PostgreSQL `statement_timeout` (1–300 s, default 30) and `lock_timeout` (1–60 s, default 5) in every transaction on the shared pool; a stricter value already set for the session (for example by a role setting) is kept |
 
 The pool and timeout settings apply only to code that has moved to the shared engine
-(currently the audit-log and provider reads; see
+(currently the audit-log, provider and appointment reads; see
 [architecture.md](architecture.md#data-access)), and they apply per
 process: with several worker processes each has its own pool, and other code still opens
 connections outside it. An invalid value, or a missing or blank `DB_HOST`, `DB_PORT`,
