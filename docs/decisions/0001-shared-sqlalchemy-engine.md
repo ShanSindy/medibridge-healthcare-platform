@@ -217,7 +217,29 @@ Status: proposed. Date: 2026-11-24.
     propagates (SQLSTATE 57014 for a statement timeout, 55P03 for a lock timeout,
     wrapped as `sqlalchemy.exc.OperationalError`) and the request fails with a plain 500.
   - `get_connection()` connections, and so every write, keep their current behaviour
-    (no timeouts) until they move.
+    until they move: they do not inherit this application-configured, transaction-local
+    policy, though existing PostgreSQL server or session timeout settings may still
+    apply.
 - **Unchanged isolation.** Provider search runs its page and count in one READ COMMITTED
   transaction, as before; they can disagree if providers change in between. A stronger
   isolation level was not introduced.
+
+## Amendment: appointment reads (Phase 2, third slice)
+
+Status: proposed. Date: 2026-11-25.
+
+- `appointment_service.get_all_appointments` (optional patient, provider and status
+  filters, ordered by start time then id) and `get_appointment_by_id` moved to the engine
+  the same way as the provider reads: Core `select()` on a lightweight `table()`, bound
+  values, `read_only_connection()`, and the engine's timeout policy unchanged. Results,
+  order, keys and value types are unchanged; tests with fixed expected results passed
+  against the old code before the change. What does change is that these reads now
+  run under the engine's transaction-local statement and lock timeouts. A statement
+  that exceeds its effective statement timeout fails, and the existing API error
+  handling returns a plain 500 for that unhandled database error. Statement and lock
+  timeouts do not establish a deadline for a whole transaction or HTTP request.
+- Appointment writes (create, update, cancel) stay on `get_connection()`. They do not
+  inherit the shared engine's application-configured, transaction-local statement and
+  lock timeout policy; existing PostgreSQL server or session timeout settings may still
+  apply. No write calls a read, so no transaction was split. The overlap rule stays a PostgreSQL exclusion
+  constraint (migration 005), with its 409 translation in the router unchanged.

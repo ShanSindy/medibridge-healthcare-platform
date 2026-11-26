@@ -1,13 +1,14 @@
 """
 Row-to-dict mapping in the service layer uses zip(..., strict=True).
 
-Each appointment query returns exactly the eight columns listed next to it.
+Each appointment write returns exactly the eight columns listed next to it.
 If a query and its column list ever drift apart, the mapping must fail loudly
 instead of silently dropping or mislabelling fields.
 
-The audit-log read no longer maps rows by hand: it uses SQLAlchemy result mappings,
-whose keys and values come from the same result. tests/test_audit_service.py checks
-its keys, order and value types against real PostgreSQL.
+The appointment reads and the audit-log read no longer map rows by hand: they use
+SQLAlchemy result mappings, whose keys and values come from the same result.
+tests/test_appointment_reads.py and tests/test_audit_service.py check their keys, order
+and value types against real PostgreSQL.
 """
 
 from datetime import UTC, datetime
@@ -74,8 +75,6 @@ APPOINTMENT_CALLS = {
     "create": lambda: appointment_service.create_appointment(
         AppointmentCreate(patient_id=1, provider_id=2, starts_at=STARTS, ends_at=ENDS)
     ),
-    "list": lambda: appointment_service.get_all_appointments()[0],
-    "get": lambda: appointment_service.get_appointment_by_id(7),
     "update": lambda: appointment_service.update_appointment(
         7, AppointmentUpdate(starts_at=STARTS, ends_at=ENDS, status="scheduled")
     ),
