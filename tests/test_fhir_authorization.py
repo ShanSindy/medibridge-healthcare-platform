@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 import main
 from auth_dependencies import get_current_user
-from routers import fhir as fhir_router
+from tests.pg_helpers import verified_connection
 
 client = TestClient(main.app)
 
@@ -12,6 +12,15 @@ FHIR_PATIENT_PATHS = [
     "/fhir/Patient",
     "/fhir/Patient/1",
 ]
+
+
+def insert_synthetic_patient(disposable_database) -> int:
+    """One synthetic patient in this session's database, through a verified connection."""
+    with verified_connection(disposable_database) as conn:
+        return conn.execute(
+            "INSERT INTO patients (first_name, last_name, date_of_birth, gender) "
+            "VALUES ('Emily', 'Carter', '1990-05-12', 'female') RETURNING id"
+        ).fetchone()[0]
 
 
 @pytest.fixture(autouse=True)
@@ -56,7 +65,7 @@ def test_fhir_metadata_is_public():
     assert response.json()["resourceType"] == "CapabilityStatement"
 
 
-def test_clinician_can_read_fhir_patient(monkeypatch):
+def test_clinician_can_read_fhir_patient(disposable_database):
     main.app.dependency_overrides[get_current_user] = lambda: {
         "id": 2,
         "username": "test_clinician",
@@ -64,59 +73,19 @@ def test_clinician_can_read_fhir_patient(monkeypatch):
         "role": "clinician",
         "is_active": True,
     }
+    patient_id = insert_synthetic_patient(disposable_database)
 
-    class FakeCursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-        def execute(self, query, params=None):
-            pass
-
-        def fetchone(self):
-            return (
-                1,
-                "Emily",
-                "Carter",
-                "1990-05-12",
-                "female",
-            )
-
-    class FakeConnection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-        def cursor(self):
-            return FakeCursor()
-
-    monkeypatch.setattr(
-        fhir_router,
-        "get_connection",
-        lambda: FakeConnection(),
-    )
-
-    monkeypatch.setattr(
-        fhir_router,
-        "get_patient_identifiers",
-        lambda patient_id: [],
-    )
-
-    response = client.get("/fhir/Patient/1")
+    response = client.get(f"/fhir/Patient/{patient_id}")
 
     assert response.status_code == 200
 
     data = response.json()
 
     assert data["resourceType"] == "Patient"
-    assert data["id"] == "1"
+    assert data["id"] == str(patient_id)
 
 
-def test_scheduler_can_search_fhir_patients(monkeypatch):
+def test_scheduler_can_search_fhir_patients(disposable_database):
     main.app.dependency_overrides[get_current_user] = lambda: {
         "id": 3,
         "username": "test_scheduler",
@@ -124,47 +93,7 @@ def test_scheduler_can_search_fhir_patients(monkeypatch):
         "role": "scheduler",
         "is_active": True,
     }
-
-    class FakeCursor:
-        def __init__(self):
-            self.query_count = 0
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-        def execute(self, query, params=None):
-            self.query_count += 1
-
-        def fetchall(self):
-            return [(1, "Emily", "Carter", "1990-05-12", "female")]
-
-        def fetchone(self):
-            return (1,)
-
-    class FakeConnection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-        def cursor(self):
-            return FakeCursor()
-
-    monkeypatch.setattr(
-        fhir_router,
-        "get_connection",
-        lambda: FakeConnection(),
-    )
-
-    monkeypatch.setattr(
-        fhir_router,
-        "get_identifiers_for_patients",
-        lambda patient_ids: {},
-    )
+    insert_synthetic_patient(disposable_database)
 
     response = client.get("/fhir/Patient")
 

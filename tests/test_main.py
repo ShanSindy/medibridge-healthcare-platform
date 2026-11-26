@@ -347,35 +347,8 @@ def test_get_fhir_patients_bundle():
         client.delete(f"/patients/{patient_id}")
 
 
-def test_get_fhir_patients_empty_bundle(monkeypatch):
-    class FakeCursor:
-        def execute(self, query, params=None):
-            pass
-
-        def fetchall(self):
-            return []
-
-        def fetchone(self):
-            return (0,)
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            pass
-
-    class FakeConnection:
-        def cursor(self):
-            return FakeCursor()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            pass
-
-    monkeypatch.setattr("routers.fhir.get_connection", lambda: FakeConnection())
-
+def test_get_fhir_patients_empty_bundle():
+    # Every test starts with empty application tables.
     response = client.get("/fhir/Patient")
 
     assert response.status_code == 200

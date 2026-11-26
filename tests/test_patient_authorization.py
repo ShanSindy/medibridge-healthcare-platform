@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 import main
 from auth_dependencies import get_current_user
 from routers import patients as patients_router
+from tests.pg_helpers import verified_connection
 
 client = TestClient(main.app)
 
@@ -63,7 +64,7 @@ def test_scheduler_cannot_modify_patients(method, path, permission):
     assert response.status_code == 403
 
 
-def test_scheduler_can_read_patients(monkeypatch):
+def test_scheduler_can_read_patients(disposable_database):
     main.app.dependency_overrides[get_current_user] = lambda: {
         "id": 2,
         "username": "test_scheduler",
@@ -71,35 +72,11 @@ def test_scheduler_can_read_patients(monkeypatch):
         "role": "scheduler",
         "is_active": True,
     }
-
-    class FakeCursor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-        def execute(self, query, params=None):
-            pass
-
-        def fetchall(self):
-            return [(1, "Emily", "Carter", "1990-05-12", "female")]
-
-    class FakeConnection:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            return False
-
-        def cursor(self):
-            return FakeCursor()
-
-    monkeypatch.setattr(
-        patients_router,
-        "get_connection",
-        lambda: FakeConnection(),
-    )
+    with verified_connection(disposable_database) as conn:
+        conn.execute(
+            "INSERT INTO patients (first_name, last_name, date_of_birth, gender) "
+            "VALUES ('Emily', 'Carter', '1990-05-12', 'female')"
+        )
 
     response = client.get("/patients")
 

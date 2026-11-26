@@ -19,11 +19,11 @@ connections, if a request ever created the engine.
 | [routers/system.py](../routers/system.py) | `GET /`, `GET /health` | None |
 | [routers/auth.py](../routers/auth.py) | login, current user, admin check | `auth_service` → `user_service` |
 | [routers/audit_logs.py](../routers/audit_logs.py) | `GET /audit-logs` | `audit_service` (shared SQLAlchemy engine) |
-| [routers/patients.py](../routers/patients.py) | Patient CRUD | **Inline SQL** in the handlers, audit rows via `audit.log_audit_event` |
+| [routers/patients.py](../routers/patients.py) | Patient CRUD | Reads: `patient_service` (shared SQLAlchemy engine). Writes: **inline SQL** on `get_connection()` in the handlers, audit rows via `audit.log_audit_event` on the same connection |
 | [routers/providers.py](../routers/providers.py) | Provider CRUD | `provider_service` (reads on the shared SQLAlchemy engine, writes on `get_connection()`) |
 | [routers/appointments.py](../routers/appointments.py) | Appointment create, read, list, update, cancel | `appointment_service` (reads on the shared SQLAlchemy engine, writes on `get_connection()`) |
 | [routers/hl7.py](../routers/hl7.py) | `POST /hl7/adt` | `hl7_service` (with `hl7_tracking`) |
-| [routers/fhir.py](../routers/fhir.py) | CapabilityStatement, Patient, Practitioner, PractitionerRole | **Inline SQL** for Patient (plus identifier queries in `database.py`); `provider_service` reads (shared SQLAlchemy engine) for Practitioner and PractitionerRole |
+| [routers/fhir.py](../routers/fhir.py) | CapabilityStatement, Patient, Practitioner, PractitionerRole | `patient_service` reads for Patient, identifier reads in `database.py` (both on the shared SQLAlchemy engine); `provider_service` reads (shared SQLAlchemy engine) for Practitioner and PractitionerRole |
 
 Routers are plain `APIRouter` objects without prefixes or shared dependencies. Each
 route declares its own access rule, and no router imports `main` or another router.
@@ -41,10 +41,11 @@ Tests enforce these rules (see
 | [auth_service.py](../auth_service.py) | Username and password check, including a dummy hash check for unknown users |
 | [user_service.py](../user_service.py) | Create and look up users |
 | [provider_service.py](../provider_service.py), [appointment_service.py](../appointment_service.py) | SQL for providers and appointments |
+| [patient_service.py](../patient_service.py) | Patient reads: list, lookup, and the FHIR search with its page and total |
 | [audit.py](../audit.py), [audit_service.py](../audit_service.py) | Write audit events (optionally inside the caller's transaction); read them |
 | [hl7_parser.py](../hl7_parser.py), [hl7_service.py](../hl7_service.py), [hl7_tracking.py](../hl7_tracking.py), [hl7_ack.py](../hl7_ack.py) | Parse and validate ADT messages, write patients, track message IDs, build ACKs |
 | [fhir.py](../fhir.py) | Map database records to FHIR resources; build `OperationOutcome` |
-| [database.py](../database.py) | `get_connection()` from the `DB_*` settings; patient identifier queries |
+| [database.py](../database.py) | `get_connection()` from the `DB_*` settings; patient identifier reads (shared engine) |
 | [db_engine.py](../db_engine.py) | The shared SQLAlchemy engine: validated `DB_*` settings, one bounded connection pool per process |
 | [db_errors.py](../db_errors.py) | Map named constraint violations to 404 or 409 responses, per endpoint |
 | [models.py](../models.py) | Pydantic request and response models |
@@ -61,13 +62,18 @@ Tests enforce these rules (see
   - The audit-log read (`audit_service`), the provider reads (`provider_service`:
     list, lookup and search, also behind FHIR Practitioner and PractitionerRole) and the
     appointment reads (`appointment_service`: list with its optional patient, provider
-    and status filters, and lookup) use the shared engine in `db_engine.py`: a bounded
+    and status filters, and lookup) and the patient reads (`patient_service`: list,
+    lookup and the FHIR Patient search, behind the REST patient routes and FHIR Patient;
+    and the identifier reads in `database.py`) use the shared engine in `db_engine.py`: a bounded
     pool (by default 5 connections plus 5 overflow, a 10 s wait for a free connection, a
     10 s connect timeout), each connection tested before use. They read through
     `db_engine.read_only_connection()`: one transaction per call that PostgreSQL keeps
     read-only, never committed, rolled back when the connection returns to the pool. Provider writes (create, update, delete)
     and appointment writes (create, update, cancel) still use `get_connection()`, so the
-    overlap rule from migration 005 and its 409 handling are unchanged. Writes on the
+    overlap rule from migration 005 and its 409 handling are unchanged. So do patient
+    writes (REST create, update, delete, each with its audit event on the same
+    connection) and HL7 registration and update, including the MRN lookup that runs
+    inside the HL7 registration transaction. Writes on the
     engine, when they move, will use `begin()` blocks, which commit on success and roll
     back on error.
   - Every engine transaction starts with a transaction-local `statement_timeout` and
@@ -193,7 +199,7 @@ flowchart TD
     auth -- "yes" --> params{"Valid parameters?<br/>numeric id, _count 1 to 100, _offset 0 or more"}
     params -- "no" --> oo422["422 OperationOutcome, code invalid<br/>application/fhir+json"]
 
-    params -- "Patient" --> psql["Inline SQL in routers/fhir.py<br/>identifiers from database.py"]
+    params -- "Patient" --> psql["patient_service<br/>identifiers from database.py"]
     params -- "Practitioner, PractitionerRole" --> svc["provider_service"]
     psql --> pmap["fhir.patient_to_fhir"]
     svc --> rmap["fhir.provider_to_fhir<br/>fhir.provider_to_practitioner_role"]

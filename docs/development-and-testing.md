@@ -104,7 +104,14 @@ return contract (a plain list of plain dicts, or a plain dict or `None`, every r
 before the connection is released), the REST responses and validation, and appointment
 writes through `get_connection()` before
 pooled reads, including a rejected overlapping booking. The overlap rules themselves stay
-in `tests/test_pg_appointments.py`. The optional `DB_POOL_*`, `DB_CONNECT_TIMEOUT_SECONDS`,
+in `tests/test_pg_appointments.py`. `tests/test_patient_reads.py` covers the patient
+reads with fixed expected results, run against the previous implementation before the
+change: the REST list and lookup, the FHIR Patient read and search (prefix and case
+rules, `%`, `_` and backslash matched literally, identifier `system|value` and value-only
+matches with each patient returned and counted once, paging, totals and links,
+validation), the identifier reads, the permission checks, and REST and HL7 writes before
+pooled reads. Its engine tests check which reads share a transaction: the search page and
+total share one, and the identifiers are read in a separate one. The optional `DB_POOL_*`, `DB_CONNECT_TIMEOUT_SECONDS`,
 `DB_STATEMENT_TIMEOUT_SECONDS` and `DB_LOCK_TIMEOUT_SECONDS` settings are handled like
 the other connection settings: from `.env.test` when it exists, otherwise from the
 environment. `tests/pg_helpers.py` holds the identity-checked connection and polling

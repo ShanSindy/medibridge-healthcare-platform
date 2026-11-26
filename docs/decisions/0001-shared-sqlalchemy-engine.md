@@ -243,3 +243,34 @@ Status: proposed. Date: 2026-11-25.
   lock timeout policy; existing PostgreSQL server or session timeout settings may still
   apply. No write calls a read, so no transaction was split. The overlap rule stays a PostgreSQL exclusion
   constraint (migration 005), with its 409 translation in the router unchanged.
+
+## Amendment: patient reads (Phase 2, fourth slice)
+
+Status: proposed. Date: 2026-11-25.
+
+- The patient reads were inline SQL in the route handlers, so this slice adds a service:
+  `patient_service.get_all_patients`, `get_patient_by_id` and `search_patients`, on the
+  engine the same way as the provider reads. The REST list and lookup and the FHIR
+  Patient read and search call it; HTTP status codes, permissions, FHIR serialization
+  (`fhir.py`), Bundle links and `OperationOutcome` responses stay in the routers,
+  unchanged. `database.get_patient_identifiers` and `get_identifiers_for_patients` moved
+  to the engine in place, so their callers are unchanged.
+- Search keeps its semantics: case-insensitive prefix matches with `%`, `_` and
+  backslash matched literally, and an `EXISTS` test for `identifier` (`system|value`,
+  split at the first `|`, or a value alone), so a patient with several matching
+  identifiers is returned and counted once. The page and the total run in one read-only
+  READ COMMITTED transaction, as before, so they can disagree if patients change in
+  between. The identifiers for a read or a page are read afterwards in a separate
+  transaction, as before (separate connections then); nothing was merged into one
+  snapshot.
+- The bulk identifier read binds the ids as one `BIGINT[]` array (`patient_id =
+  ANY(...)`), still one query per page, and still opens no connection for an empty
+  page.
+- As for the earlier slices, these reads now run under the engine's transaction-local
+  statement and lock timeouts; a statement that exceeds its effective timeout fails and
+  the request returns a plain 500. This is not a deadline for a whole request.
+- Patient writes (REST create, update, delete with their audit events) and HL7
+  registration and update stay on `get_connection()`. The MRN lookup inside the HL7
+  registration transaction (`hl7_service._patient_id_for_mrn`) must see that
+  transaction's own work, so it stays on the transaction's cursor. No write calls one
+  of the migrated reads.

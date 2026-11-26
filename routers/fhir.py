@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from auth_dependencies import require_permission
-from database import get_connection, get_identifiers_for_patients, get_patient_identifiers
+from database import get_identifiers_for_patients, get_patient_identifiers
 from fhir import (
     create_operation_outcome,
     patient_to_fhir,
@@ -14,6 +14,7 @@ from fhir import (
     provider_to_practitioner_role,
 )
 from models import Patient
+from patient_service import get_patient_by_id, search_patients
 from provider_service import get_provider_by_id, search_providers
 
 router = APIRouter()
@@ -113,18 +114,7 @@ def get_fhir_metadata():
     dependencies=[Depends(require_permission("patients:read"))],
 )
 def get_fhir_patient(patient_id: int):
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id, first_name, last_name, date_of_birth, gender
-                FROM patients
-                WHERE id = %s
-                """,
-                (patient_id,),
-            )
-
-            row = cursor.fetchone()
+    row = get_patient_by_id(patient_id)
 
     if row is None:
         return JSONResponse(
@@ -133,9 +123,7 @@ def get_fhir_patient(patient_id: int):
             media_type="application/fhir+json",
         )
 
-    patient = Patient(
-        id=row[0], first_name=row[1], last_name=row[2], date_of_birth=row[3], gender=row[4]
-    )
+    patient = Patient(**row)
 
     return patient_to_fhir(patient, identifiers=get_patient_identifiers(patient_id))
 
@@ -152,93 +140,12 @@ def get_fhir_patients(
     count: int = Query(default=10, alias="_count", ge=1, le=100),
     offset: int = Query(default=0, alias="_offset", ge=0),
 ):
-    # Escape SQL LIKE wildcards for prefix matching.
-    def prefix_pattern(value: str) -> str:
-        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        return f"{escaped}%"
+    # One page of matching patients and the total number of matches.
+    rows, total_matches = search_patients(
+        family=family, given=given, identifier=identifier, count=count, offset=offset
+    )
 
-    # Build search filters and their SQL parameters.
-    conditions = []
-    params = []
-
-    if family is not None:
-        conditions.append("p.last_name ILIKE %s")
-        params.append(prefix_pattern(family))
-
-    if given is not None:
-        conditions.append("p.first_name ILIKE %s")
-        params.append(prefix_pattern(given))
-
-    if identifier is not None:
-        if "|" in identifier:
-            system, value = identifier.split("|", 1)
-
-            conditions.append(
-                """
-                EXISTS (
-                    SELECT 1
-                    FROM patient_identifiers pi
-                    WHERE pi.patient_id = p.id
-                      AND pi.system = %s
-                      AND pi.value = %s
-                )
-                """
-            )
-            params.extend([system, value])
-        else:
-            conditions.append(
-                """
-                EXISTS (
-                    SELECT 1
-                    FROM patient_identifiers pi
-                    WHERE pi.patient_id = p.id
-                      AND pi.value = %s
-                )
-                """
-            )
-            params.append(identifier)
-
-    where_clause = "WHERE " + " AND ".join(conditions) if conditions else ""
-
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            # Retrieve one page of matching patients.
-            # S608 reviewed: the WHERE clause is assembled only from fixed SQL fragments in this
-            # function, and every user-supplied value is passed separately as a %s parameter.
-            cursor.execute(
-                f"""
-                SELECT
-                    p.id,
-                    p.first_name,
-                    p.last_name,
-                    p.date_of_birth,
-                    p.gender
-                FROM patients p
-                {where_clause}
-                ORDER BY p.id
-                LIMIT %s OFFSET %s
-                """,  # noqa: S608
-                (*params, count, offset),
-            )
-            rows = cursor.fetchall()
-
-            # Count all matches before pagination.
-            # S608 reviewed: the WHERE clause is assembled only from fixed SQL fragments in this
-            # function, and every user-supplied value is passed separately as a %s parameter.
-            cursor.execute(
-                f"""
-                SELECT COUNT(*)
-                FROM patients p
-                {where_clause}
-                """,  # noqa: S608
-                tuple(params),
-            )
-            total_matches = cursor.fetchone()[0]
-
-    patients = [
-        Patient(id=row[0], first_name=row[1], last_name=row[2], date_of_birth=row[3], gender=row[4])
-        for row in rows
-    ]
+    patients = [Patient(**row) for row in rows]
 
     # Retrieve identifiers for the entire page in one query.
     identifiers_by_patient = get_identifiers_for_patients([patient.id for patient in patients])
