@@ -8,6 +8,7 @@ from auth_dependencies import get_current_user, require_permission
 from database import get_connection
 from db_errors import raise_for_constraint
 from models import Patient, PatientCreate
+from patient_service import get_all_patients, get_patient_by_id
 
 router = APIRouter()
 
@@ -29,28 +30,7 @@ PATIENT_DELETE_CONSTRAINTS = {
     dependencies=[Depends(require_permission("patients:read"))],
 )
 def get_patients():
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id, first_name, last_name, date_of_birth, gender
-                FROM patients
-                ORDER BY id
-                """
-            )
-
-            rows = cursor.fetchall()
-
-    return [
-        {
-            "id": row[0],
-            "first_name": row[1],
-            "last_name": row[2],
-            "date_of_birth": row[3],
-            "gender": row[4],
-        }
-        for row in rows
-    ]
+    return get_all_patients()
 
 
 @router.get(
@@ -59,29 +39,12 @@ def get_patients():
     dependencies=[Depends(require_permission("patients:read"))],
 )
 def get_patient(patient_id: int):
-    with get_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id, first_name, last_name, date_of_birth, gender
-                FROM patients
-                WHERE id = %s
-                """,
-                (patient_id,),
-            )
+    patient = get_patient_by_id(patient_id)
 
-            row = cursor.fetchone()
-
-    if row is None:
+    if patient is None:
         raise HTTPException(status_code=404, detail="Patient not found")
 
-    return {
-        "id": row[0],
-        "first_name": row[1],
-        "last_name": row[2],
-        "date_of_birth": row[3],
-        "gender": row[4],
-    }
+    return patient
 
 
 @router.post(
