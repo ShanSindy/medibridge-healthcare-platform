@@ -77,6 +77,7 @@ include = [
     "database.py",
     "db_engine.py",
     "db_errors.py",
+    "db_schema.py",
     "fhir.py",
     "hl7_ack.py",
     "hl7_parser.py",
