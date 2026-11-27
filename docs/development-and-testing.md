@@ -129,6 +129,7 @@ disposed.
 | `test_pg_auth.py` | Real users, sign-in, tokens, inactive users, roles, unique usernames and emails | 8 |
 | `test_pg_audit_logs.py` | Audit-log order (including the id tie-breaker) and paging | 7 |
 | `test_pg_schema.py` | Migration ledger and re-runs; constraints, foreign keys, indexes and `btree_gist` from the catalogs | 16 |
+| `test_schema_drift.py` | `db_schema` metadata against the migrated schema: every table, column, default, identity, constraint, index and extension, built in a rolled-back scratch schema; changes to either side are detected (see [ADR 0002](decisions/0002-schema-metadata-and-drift-check.md)) | 42 |
 
 Run them as a group or one module at a time (from the repository root, same in bash and
 PowerShell):

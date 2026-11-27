@@ -50,6 +50,7 @@ Tests enforce these rules (see
 | [db_errors.py](../db_errors.py) | Map named constraint violations to 404 or 409 responses, per endpoint |
 | [models.py](../models.py) | Pydantic request and response models |
 | [migrate.py](../migrate.py), [migrations/](../migrations) | Plain SQL schema migrations, applied in order and recorded in `schema_migrations` |
+| [db_schema.py](../db_schema.py) | The schema as SQLAlchemy Core metadata, descriptive only and checked against the migrations ([ADR 0002](decisions/0002-schema-metadata-and-drift-check.md)); not used at runtime |
 | [patients.py](../patients.py) | Legacy static list of synthetic patients; not used by the application |
 
 ## Data access
