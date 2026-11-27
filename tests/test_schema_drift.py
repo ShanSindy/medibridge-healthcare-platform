@@ -51,6 +51,15 @@ from sqlalchemy.dialects.postgresql import psycopg as pg_dialect
 from sqlalchemy.schema import CreateIndex, CreateTable
 
 import db_schema
+import schema_inspection
+from schema_inspection import (
+    EXPECTED_EXTENSIONS,
+    differences,
+    extension_inventory,
+    materialize_expected,
+    non_system_schemas,
+    require_only_public,
+)
 from tests import db_safety
 from tests.pg_helpers import verified_connection
 
@@ -59,266 +68,18 @@ EXCLUDED_TABLES = {"public": {"schema_migrations"}}
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def snapshot(conn, schema: str) -> dict:
+    return schema_inspection.snapshot(conn, schema, EXCLUDED_TABLES.get(schema, ()))
+
+
+def build_expected(conn, metadata) -> None:
+    materialize_expected(conn, metadata, SCRATCH)
+
+
 # --- catalog snapshot ----------------------------------------------------------------------
 
 
-def rows(conn, query, params=None):
-    return conn.execute(query, params).fetchall()
-
-
-def snapshot(conn, schema: str) -> dict:
-    """Every compared property of `schema`, as plain data. Run inside a transaction."""
-    conn.execute("SELECT set_config('search_path', %s, true)", (f'"{schema}", public',))
-    excluded = sorted(EXCLUDED_TABLES.get(schema, ()))
-    ns = rows(conn, "SELECT oid FROM pg_namespace WHERE nspname = %s", (schema,))[0][0]
-    not_extension = """NOT EXISTS (SELECT 1 FROM pg_depend d
-        WHERE d.objid = {oid} AND d.deptype = 'e')"""
-
-    objects = rows(
-        conn,
-        f"""SELECT c.relkind::text, c.relname FROM pg_class c
-            WHERE c.relnamespace = %s AND {not_extension.format(oid="c.oid")}
-              AND NOT (c.relkind = 'r' AND c.relname = ANY(%s))
-              AND NOT EXISTS (SELECT 1 FROM pg_index x JOIN pg_class t ON t.oid = x.indrelid
-                              WHERE x.indexrelid = c.oid AND t.relname = ANY(%s))
-            ORDER BY 1, 2""",  # noqa: S608 - only the fixed NOT EXISTS fragment is inserted
-        (ns, excluded, excluded),
-    )
-    functions = rows(
-        conn,
-        f"""SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
-            FROM pg_proc p WHERE p.pronamespace = %s AND {not_extension.format(oid="p.oid")}
-            ORDER BY 1""",  # noqa: S608 - only the fixed NOT EXISTS fragment is inserted
-        (ns,),
-    )
-    types = rows(
-        conn,
-        f"""SELECT t.typname FROM pg_type t
-            WHERE t.typnamespace = %s AND {not_extension.format(oid="t.oid")}
-              AND t.typrelid = 0 AND t.typelem = 0
-            ORDER BY 1""",  # noqa: S608 - fixed fragment only
-        (ns,),
-    )
-    tables = [
-        r[0]
-        for r in rows(
-            conn,
-            "SELECT relname FROM pg_class WHERE relnamespace = %s AND relkind = 'r' "
-            "AND NOT relname = ANY(%s) ORDER BY 1",
-            (ns, excluded),
-        )
-    ]
-
-    columns = rows(
-        conn,
-        """SELECT c.relname, row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum),
-                  a.attname, format_type(a.atttypid, a.atttypmod),
-                  a.attnotnull, a.attidentity::text, a.attgenerated::text,
-                  pg_get_expr(d.adbin, d.adrelid), cn.nspname || '.' || co.collname
-           FROM pg_attribute a
-           JOIN pg_class c ON c.oid = a.attrelid
-           LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-           LEFT JOIN pg_collation co ON co.oid = a.attcollation AND a.attcollation <> 100
-           LEFT JOIN pg_namespace cn ON cn.oid = co.collnamespace
-           WHERE c.relnamespace = %s AND c.relkind = 'r' AND NOT c.relname = ANY(%s)
-             AND a.attnum > 0 AND NOT a.attisdropped
-           ORDER BY 1, 2""",
-        (ns, excluded),
-    )
-    sequences = rows(
-        conn,
-        """SELECT c.relname, a.attname, format_type(s.seqtypid, NULL), s.seqstart,
-                  s.seqincrement, s.seqmin, s.seqmax, s.seqcache, s.seqcycle,
-                  sc.relnamespace = %s
-           FROM pg_attribute a
-           JOIN pg_class c ON c.oid = a.attrelid
-           JOIN pg_depend dep ON dep.refobjid = c.oid AND dep.refobjsubid = a.attnum
-                AND dep.classid = 'pg_class'::regclass AND dep.deptype = 'i'
-           JOIN pg_class sc ON sc.oid = dep.objid AND sc.relkind = 'S'
-           JOIN pg_sequence s ON s.seqrelid = sc.oid
-           WHERE c.relnamespace = %s AND NOT c.relname = ANY(%s)
-           ORDER BY 1, 2""",
-        (ns, ns, excluded),
-    )
-    constraints = rows(
-        conn,
-        """SELECT c.relname, k.conname, k.contype::text,
-                  ARRAY(SELECT a.attname FROM unnest(k.conkey) WITH ORDINALITY u(n, o)
-                        JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.n
-                        ORDER BY u.o),
-                  pg_get_constraintdef(k.oid), k.condeferrable, k.condeferred,
-                  k.convalidated, k.connoinherit,
-                  t.relname, t.relnamespace = %s, k.confupdtype::text, k.confdeltype::text,
-                  k.confmatchtype::text
-           FROM pg_constraint k
-           JOIN pg_class c ON c.oid = k.conrelid
-           LEFT JOIN pg_class t ON t.oid = k.confrelid
-           WHERE c.relnamespace = %s AND NOT c.relname = ANY(%s)
-           ORDER BY 1, 2""",
-        (ns, ns, excluded),
-    )
-    indexes = rows(
-        conn,
-        """SELECT t.relname, i.relname, pg_get_indexdef(x.indexrelid), x.indisunique,
-                  x.indisprimary, x.indisexclusion, x.indisvalid, x.indisready,
-                  ARRAY(SELECT n.nspname || '.' || o.opcname
-                        FROM unnest(x.indclass) WITH ORDINALITY u(oc, pos)
-                        JOIN pg_opclass o ON o.oid = u.oc
-                        JOIN pg_namespace n ON n.oid = o.opcnamespace ORDER BY u.pos),
-                  pg_get_expr(x.indpred, x.indrelid), i.relnamespace = %s
-           FROM pg_index x
-           JOIN pg_class i ON i.oid = x.indexrelid
-           JOIN pg_class t ON t.oid = x.indrelid
-           WHERE t.relnamespace = %s AND NOT t.relname = ANY(%s)
-           ORDER BY 1, 2""",
-        (ns, ns, excluded),
-    )
-    table_options = rows(
-        conn,
-        """SELECT c.relname, c.reloptions, c.relpersistence::text, c.relrowsecurity,
-                  c.relforcerowsecurity, c.relreplident::text, am.amname,
-                  ARRAY(SELECT pn.nspname || '.' || pc.relname FROM pg_inherits h
-                        JOIN pg_class pc ON pc.oid = h.inhparent
-                        JOIN pg_namespace pn ON pn.oid = pc.relnamespace
-                        WHERE h.inhrelid = c.oid ORDER BY 1)
-           FROM pg_class c LEFT JOIN pg_am am ON am.oid = c.relam
-           WHERE c.relnamespace = %s AND c.relkind = 'r' AND NOT c.relname = ANY(%s)
-           ORDER BY 1""",
-        (ns, excluded),
-    )
-    # User triggers by definition; internal (foreign-key) triggers have generated names,
-    # so only their count and enabled states per table are compared.
-    triggers = rows(
-        conn,
-        """SELECT c.relname, g.tgname, g.tgenabled::text, pg_get_triggerdef(g.oid)
-           FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid
-           WHERE c.relnamespace = %s AND NOT g.tgisinternal AND NOT c.relname = ANY(%s)
-           ORDER BY 1, 2""",
-        (ns, excluded),
-    )
-    internal_triggers = rows(
-        conn,
-        """SELECT c.relname, count(*), array_agg(g.tgenabled::text ORDER BY g.tgenabled)
-           FROM pg_trigger g JOIN pg_class c ON c.oid = g.tgrelid
-           WHERE c.relnamespace = %s AND g.tgisinternal AND NOT c.relname = ANY(%s)
-           GROUP BY 1 ORDER BY 1""",
-        (ns, excluded),
-    )
-    policies = rows(
-        conn,
-        """SELECT c.relname, p.polname, p.polcmd::text, p.polpermissive,
-                  pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid)
-           FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
-           WHERE c.relnamespace = %s ORDER BY 1, 2""",
-        (ns,),
-    )
-    rules = rows(
-        conn,
-        """SELECT c.relname, r.rulename, r.ev_type::text, r.is_instead
-           FROM pg_rewrite r JOIN pg_class c ON c.oid = r.ev_class
-           WHERE c.relnamespace = %s AND r.rulename <> '_RETURN' ORDER BY 1, 2""",
-        (ns,),
-    )
-    statistics = rows(
-        conn,
-        "SELECT stxname FROM pg_statistic_ext WHERE stxnamespace = %s ORDER BY 1",
-        (ns,),
-    )
-    collations = rows(
-        conn,
-        f"""SELECT collname FROM pg_collation co
-            WHERE co.collnamespace = %s AND {not_extension.format(oid="co.oid")}
-            ORDER BY 1""",  # noqa: S608 - fixed fragment only
-        (ns,),
-    )
-    operators = rows(
-        conn,
-        f"""SELECT oprname || '(' || oprleft::regtype || ',' || oprright::regtype || ')'
-            FROM pg_operator o
-            WHERE o.oprnamespace = %s AND {not_extension.format(oid="o.oid")}
-            ORDER BY 1""",  # noqa: S608 - fixed fragment only
-        (ns,),
-    )
-    return {
-        "objects": [list(r) for r in objects],
-        "functions": [r[0] for r in functions],
-        "types": [r[0] for r in types],
-        "tables": tables,
-        "columns": [list(r) for r in columns],
-        "sequences": [list(r) for r in sequences],
-        "constraints": [list(r) for r in constraints],
-        # pg_get_indexdef always schema-qualifies the indexed table; only that one
-        # qualifier, of the schema under test, is replaced.
-        "indexes": [
-            [*r[:2], r[2].replace(f" ON {schema}.", " ON <schema>.", 1), *r[3:]] for r in indexes
-        ],
-        "table_options": [list(r) for r in table_options],
-        # pg_get_triggerdef also schema-qualifies the table; the same single rewrite.
-        "triggers": [
-            [*r[:3], r[3].replace(f" ON {schema}.", " ON <schema>.", 1)] for r in triggers
-        ],
-        "internal_triggers": [list(r) for r in internal_triggers],
-        "policies": [list(r) for r in policies],
-        "rules": [list(r) for r in rules],
-        "statistics": [r[0] for r in statistics],
-        "collations": [r[0] for r in collations],
-        "operators": [r[0] for r in operators],
-    }
-
-
-def extension_inventory(conn) -> list[list[str]]:
-    """Every installed extension and its schema (extensions are database-wide)."""
-    return [
-        list(r)
-        for r in rows(
-            conn,
-            "SELECT e.extname, n.nspname FROM pg_extension e "
-            "JOIN pg_namespace n ON n.oid = e.extnamespace ORDER BY 1",
-        )
-    ]
-
-
-# plpgsql is installed in every database; the rest must be exactly the required ones.
-EXPECTED_EXTENSIONS = sorted(
-    [["plpgsql", "pg_catalog"], *([name, "public"] for name in db_schema.REQUIRED_EXTENSIONS)]
-)
-
-
-def differences(expected: dict, actual: dict) -> list[str]:
-    out = []
-    for key in sorted(set(expected) | set(actual)):
-        e, a = expected.get(key), actual.get(key)
-        if e == a:
-            continue
-        e_set = {repr(x) for x in e} if isinstance(e, list) else {repr(e)}
-        a_set = {repr(x) for x in a} if isinstance(a, list) else {repr(a)}
-        for item in sorted(e_set - a_set):
-            out.append(f"{key}: missing from migrated schema: {item}")
-        for item in sorted(a_set - e_set):
-            out.append(f"{key}: unexpected in migrated schema: {item}")
-        if e_set == a_set:
-            out.append(f"{key}: same items in a different order")
-    return out
-
-
 # --- the expected schema, built from metadata inside a rolled-back transaction ------------
-
-
-def non_system_schemas(conn) -> list[str]:
-    return [
-        r[0]
-        for r in rows(
-            conn,
-            "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' "
-            "AND nspname <> 'information_schema' ORDER BY 1",
-        )
-    ]
-
-
-def require_only_public(conn) -> None:
-    found = non_system_schemas(conn)
-    if found != ["public"]:
-        raise db_safety.UnsafeTestDatabase(f"Unexpected schemas before the drift check: {found}")
 
 
 @contextmanager
@@ -338,19 +99,6 @@ def drift_transaction(disposable_database):
             yield conn
         finally:
             conn.rollback()
-
-
-def build_expected(conn, metadata) -> None:
-    """Creates the metadata's tables in SCRATCH; tables with an explicit schema are skipped."""
-    conn.execute(f'CREATE SCHEMA "{SCRATCH}"')
-    conn.execute("SELECT set_config('search_path', %s, true)", (f'"{SCRATCH}", public',))
-    dialect = pg_dialect.dialect()
-    for table in metadata.sorted_tables:
-        if table.schema is not None:
-            continue
-        conn.execute(str(CreateTable(table).compile(dialect=dialect)))
-        for index in sorted(table.indexes, key=lambda i: i.name):
-            conn.execute(str(CreateIndex(index).compile(dialect=dialect)))
 
 
 def drift(disposable_database, metadata=None, actual_changes=()) -> list[str]:
@@ -394,10 +142,8 @@ def test_the_expected_schema_never_outlives_its_transaction(disposable_database)
 
 def test_drift_transaction_refuses_to_start_beside_another_schema(disposable_database, monkeypatch):
 
-    monkeypatch.setattr(
-        sys.modules[__name__], "non_system_schemas", lambda conn: ["other", "public"]
-    )
-    with pytest.raises(db_safety.UnsafeTestDatabase, match="Unexpected schemas"):
+    monkeypatch.setattr(schema_inspection, "non_system_schemas", lambda conn: ["other", "public"])
+    with pytest.raises(schema_inspection.UnsafeDatabaseState, match="Unexpected schemas"):
         with drift_transaction(disposable_database):
             pytest.fail("the check must not start")
 
@@ -407,7 +153,7 @@ def test_an_unexpected_existing_schema_stops_the_check(disposable_database):
         conn.autocommit = False
         try:
             conn.execute('CREATE SCHEMA "unexpected_existing"')
-            with pytest.raises(db_safety.UnsafeTestDatabase, match="Unexpected schemas"):
+            with pytest.raises(schema_inspection.UnsafeDatabaseState, match="Unexpected schemas"):
                 require_only_public(conn)
         finally:
             conn.rollback()
@@ -651,10 +397,28 @@ def test_metadata_imports_without_an_engine_or_connection():
     assert result.returncode == 0, result.stderr
 
 
+def test_the_application_never_loads_the_metadata():
+    code = "; ".join(
+        [
+            "import sys, main",
+            "loaded = sorted({'db_schema', 'schema_inspection', 'alembic'} & set(sys.modules))",
+            "assert not loaded, loaded",
+        ]
+    )
+    result = subprocess.run(  # noqa: S603 - fixed arguments, no untrusted input
+        [sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr[-500:]
+
+
+# Migration tooling may use the metadata; runtime modules may not.
+MIGRATION_TOOLING = {"db_schema.py", "schema_inspection.py", "conftest.py"}
+
+
 def test_no_application_module_imports_the_metadata():
     importers = []
     for path in [*ROOT.glob("*.py"), *ROOT.glob("routers/*.py")]:
-        if path.name in {"db_schema.py", "conftest.py"}:
+        if path.name in MIGRATION_TOOLING:
             continue
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.ImportFrom) and node.module == "db_schema":

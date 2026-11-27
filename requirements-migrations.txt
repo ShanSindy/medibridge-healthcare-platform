@@ -1,0 +1,5 @@
+# Migration tooling (Alembic), separate from the application runtime.
+# Installs the runtime dependencies too: pip install -r requirements-migrations.txt
+-r requirements.txt
+
+alembic==1.20.1

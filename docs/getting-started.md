@@ -57,7 +57,8 @@ source .venv/bin/activate        # Git Bash on Windows: source .venv/Scripts/act
 python -m pip install -r requirements-dev.txt
 ```
 
-`requirements-dev.txt` installs the runtime dependencies plus the test, lint, coverage
+`requirements-dev.txt` installs the runtime dependencies, the migration tooling
+(`requirements-migrations.txt`, Alembic), plus the test, lint, coverage
 and audit tools. `requirements.txt` alone is enough to run the application. All later
 commands assume the environment is active and the current directory is the repository
 root.

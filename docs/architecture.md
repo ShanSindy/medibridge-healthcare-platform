@@ -51,6 +51,7 @@ Tests enforce these rules (see
 | [models.py](../models.py) | Pydantic request and response models |
 | [migrate.py](../migrate.py), [migrations/](../migrations) | Plain SQL schema migrations, applied in order and recorded in `schema_migrations` |
 | [db_schema.py](../db_schema.py) | The schema as SQLAlchemy Core metadata, descriptive only and checked against the migrations ([ADR 0002](decisions/0002-schema-metadata-and-drift-check.md)); not used at runtime |
+| [schema_inspection.py](../schema_inspection.py), [alembic/](../alembic) | Read-only schema and migration-state inspection; the Alembic environment and baseline revision, for fresh databases only ([ADR 0003](decisions/0003-alembic-baseline.md)); not used at runtime |
 | [patients.py](../patients.py) | Legacy static list of synthetic patients; not used by the application |
 
 ## Data access

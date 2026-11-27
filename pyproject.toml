@@ -90,6 +90,7 @@ include = [
     "permissions.py",
     "provision_user.py",
     "provider_service.py",
+    "schema_inspection.py",
     "security.py",
     "seed_demo_data.py",
     "token_service.py",
@@ -106,6 +107,8 @@ include = [
     "routers/system.py",
     # Migration logic
     "migrate.py",
+    "alembic/env.py",
+    "alembic/versions/0001_baseline.py",
     # Test-database safety infrastructure
     "conftest.py",
     "tests/conftest.py",
