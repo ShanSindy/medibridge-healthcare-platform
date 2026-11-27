@@ -53,6 +53,7 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            requirements-migrations.txt
 
       - name: Install dependencies
         run: |
@@ -194,6 +195,7 @@ jobs:
           cache-dependency-path: |
             requirements.txt
             requirements-dev.txt
+            requirements-migrations.txt
 
       - name: Install Python dependencies
         run: |
