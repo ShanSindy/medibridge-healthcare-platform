@@ -75,9 +75,11 @@ Tests enforce these rules (see
     overlap rule from migration 005 and its 409 handling are unchanged. So do patient
     writes (REST create, update, delete, each with its audit event on the same
     connection) and HL7 registration and update, including the MRN lookup that runs
-    inside the HL7 registration transaction. Writes on the
-    engine, when they move, will use `begin()` blocks, which commit on success and roll
-    back on error.
+    inside the HL7 registration transaction. Writes on the engine, when they move, will
+    use `db_engine.write_transaction()`: one read-write transaction per block, with the
+    same timeouts, committed when the block ends normally and rolled back on an exception;
+    `db_errors.raise_for_constraint()` maps its SQLAlchemy-wrapped integrity errors to the
+    same 404 and 409 responses as psycopg's own.
   - Every engine transaction starts with a transaction-local `statement_timeout` and
     `lock_timeout`: the configured limit (30 s and 5 s by default), or the session's own
     value where that is stricter (0, "disabled", never counts as stricter). They end

@@ -119,6 +119,7 @@ cp .env.example .env               # POSIX shell
 | `DB_POOL_SIZE`, `DB_POOL_MAX_OVERFLOW` | No | Connections kept open by the shared pool (1–50, default 5) and extra connections allowed under load (0–50, default 5) |
 | `DB_POOL_TIMEOUT_SECONDS`, `DB_CONNECT_TIMEOUT_SECONDS` | No | Wait for a free pooled connection, and for a new connection to open (1–300 s, default 10 each) |
 | `DB_STATEMENT_TIMEOUT_SECONDS`, `DB_LOCK_TIMEOUT_SECONDS` | No | Upper limits for PostgreSQL `statement_timeout` (1–300 s, default 30) and `lock_timeout` (1–60 s, default 5) in every transaction on the shared pool; a stricter value already set for the session (for example by a role setting) is kept |
+| `DB_KEEPALIVES`, `DB_KEEPALIVES_IDLE_SECONDS`, `DB_KEEPALIVES_INTERVAL_SECONDS`, `DB_KEEPALIVES_COUNT` | No | TCP keepalives for the shared pool's connections: on/off (0 or 1), idle time before the first probe (1–7200 s), probe interval (1–600 s), lost probes before the connection counts as dead (1–100; libpq may ignore it on Windows). Unset values keep the libpq and operating-system defaults; timing values with `DB_KEEPALIVES=0` are refused |
 
 The pool and timeout settings apply only to code that has moved to the shared engine
 (currently the audit-log, provider, appointment and patient reads; see
