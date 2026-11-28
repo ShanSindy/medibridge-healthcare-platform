@@ -11,7 +11,7 @@ Code that uses it owns each connection through a `with` block:
 
     with read_only_connection() as conn:  # reads: PostgreSQL read-only, rolled back
         ...
-    with get_engine().begin() as conn:    # writes (none yet): committed, or rolled back
+    with write_transaction() as conn:     # writes: committed, or rolled back
         ...
 
 When the block ends the connection goes back to the pool, which rolls back anything

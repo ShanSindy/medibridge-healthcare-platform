@@ -307,3 +307,25 @@ Status: proposed. Date: 2026-11-26.
   PostgreSQL's own error detail (for example `Key (email)=(...) already exists`) can
   still name a value. It never reaches clients (mapped errors carry fixed text, unknown
   ones become a plain 500) but can reach server logs.
+
+## Amendment: provider writes (Phase 2, Milestone 8)
+
+Status: proposed. Date: 2026-11-27.
+
+- `create_provider`, `update_provider` and `delete_provider` run their single INSERT,
+  UPDATE or DELETE with RETURNING as SQLAlchemy Core statements in
+  `db_engine.write_transaction()`, on the `providers` table object the reads already use.
+  Each result is read in full inside the block and returned as a plain dictionary (or
+  `None` / `False`), with the same keys, order and values as before.
+- The providers router catches SQLAlchemy's `IntegrityError` instead of psycopg's
+  `UniqueViolation`, `ForeignKeyViolation` and `RestrictViolation`.
+  `raise_for_constraint()` still maps only `providers_email_key` (create, update) and
+  `appointments_provider_id_fkey` (delete) to their 409s and re-raises everything else,
+  so the responses are unchanged.
+- Consequences: provider writes now use the engine's pool (waiting at most the pool
+  timeout for a connection) and its statement and lock timeouts (30 s and 5 s by
+  default). A provider write blocked by another transaction for longer than the lock
+  timeout now fails with a plain 500 and changes nothing, where it used to wait without
+  a limit. Bound values no longer appear in SQLAlchemy's error messages
+  (`hide_parameters`); PostgreSQL's own error detail still can (see Milestone 7).
+- Appointment, patient, audit, user and HL7 writes stay on `get_connection()`.

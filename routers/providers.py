@@ -1,7 +1,7 @@
 """Provider directory endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from psycopg.errors import ForeignKeyViolation, RestrictViolation, UniqueViolation
+from sqlalchemy.exc import IntegrityError
 
 from auth_dependencies import require_permission
 from db_errors import raise_for_constraint
@@ -16,10 +16,12 @@ from provider_service import (
 
 router = APIRouter()
 
-# Constraint violations that are client errors, per operation. Anything not
-# listed still propagates, so unexpected database errors are not masked.
-# Deletes catch RestrictViolation (ON DELETE RESTRICT, the current schema)
-# and ForeignKeyViolation (ON DELETE NO ACTION) so either definition works.
+# Constraint violations that are client errors, per operation. The service writes on
+# the shared engine, so they arrive as SQLAlchemy IntegrityError (the psycopg error in
+# `.orig`); raise_for_constraint maps only the constraints listed here and re-raises
+# anything else, so unexpected database errors are not masked. The delete mapping
+# covers ON DELETE RESTRICT (the current schema) and ON DELETE NO ACTION alike: both
+# name the same foreign key constraint.
 PROVIDER_DELETE_CONSTRAINTS = {
     "appointments_provider_id_fkey": (
         409,
@@ -47,7 +49,7 @@ def create_provider_endpoint(provider: ProviderCreate):
     """
     try:
         return create_provider(provider)
-    except UniqueViolation as exc:
+    except IntegrityError as exc:
         raise_for_constraint(exc, PROVIDER_WRITE_CONSTRAINTS)
 
 
@@ -100,7 +102,7 @@ def update_provider_endpoint(
     """
     try:
         updated_provider = update_provider(provider_id, provider)
-    except UniqueViolation as exc:
+    except IntegrityError as exc:
         raise_for_constraint(exc, PROVIDER_WRITE_CONSTRAINTS)
 
     if updated_provider is None:
@@ -124,7 +126,7 @@ def delete_provider_endpoint(provider_id: int):
     """
     try:
         deleted = delete_provider(provider_id)
-    except (ForeignKeyViolation, RestrictViolation) as exc:
+    except IntegrityError as exc:
         raise_for_constraint(exc, PROVIDER_DELETE_CONSTRAINTS)
 
     if not deleted:
