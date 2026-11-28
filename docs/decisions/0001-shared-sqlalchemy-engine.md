@@ -274,3 +274,36 @@ Status: proposed. Date: 2026-11-25.
   registration transaction (`hl7_service._patient_id_for_mrn`) must see that
   transaction's own work, so it stays on the transaction's cursor. No write calls one
   of the migrated reads.
+
+## Amendment: write infrastructure (Phase 2, Milestone 7)
+
+Status: proposed. Date: 2026-11-26.
+
+- `db_engine.write_transaction()` is the one way engine code will write: a pooled
+  connection in one read-write transaction with the same statement and lock timeouts as
+  the reads. The block owns the transaction: it commits when the block ends normally and
+  rolls back when an exception escapes, which propagates unchanged. Through the
+  SQLAlchemy connection it yields, the transaction cannot end early: engine listeners on
+  `commit` and `rollback` raise `TransactionOwnershipError` before anything reaches
+  PostgreSQL, and the whole block rolls back, so its writes commit all together or not at
+  all. Savepoints work inside it. Ending the transaction behind SQLAlchemy's back (the raw
+  driver's `commit()`, or `COMMIT` sent as SQL) is unsupported: it is only detected at
+  the end of the block (the transaction id changed), which then raises and rolls back
+  what followed, but what the bypass committed stays. That check reads
+  `pg_current_xact_id()`, so every block gets a transaction id, even one that writes
+  nothing. After a refusal or any other error the transaction is also rolled back at the
+  driver level, and a connection that cannot be cleaned is invalidated rather than
+  returned to the pool. Blocks do not nest. No service writes through it yet; services move
+  in later milestones.
+- `db_errors` reads the SQLSTATE and constraint name from psycopg errors directly or
+  through SQLAlchemy's `.orig`, so `raise_for_constraint()` keeps the existing 404 and
+  409 mappings for engine writes. Only integrity violations (SQLSTATE class 23) whose
+  constraint is in the endpoint's mapping become client errors; everything else is
+  re-raised unchanged, and the HTTP error carries only the mapped detail.
+- Optional `DB_KEEPALIVES*` settings pass libpq TCP keepalive parameters (validated
+  ranges; unset keeps the defaults). Keepalives let the operating system notice a dead
+  peer on an idle connection; they are not a read timeout for a statement in progress.
+- Limitation: `hide_parameters` keeps bound values out of SQLAlchemy's messages, but
+  PostgreSQL's own error detail (for example `Key (email)=(...) already exists`) can
+  still name a value. It never reaches clients (mapped errors carry fixed text, unknown
+  ones become a plain 500) but can reach server logs.
