@@ -20,7 +20,7 @@ connections, if a request ever created the engine.
 | [routers/auth.py](../routers/auth.py) | login, current user, admin check | `auth_service` → `user_service` |
 | [routers/audit_logs.py](../routers/audit_logs.py) | `GET /audit-logs` | `audit_service` (shared SQLAlchemy engine) |
 | [routers/patients.py](../routers/patients.py) | Patient CRUD | Reads: `patient_service` (shared SQLAlchemy engine). Writes: **inline SQL** on `get_connection()` in the handlers, audit rows via `audit.log_audit_event` on the same connection |
-| [routers/providers.py](../routers/providers.py) | Provider CRUD | `provider_service` (reads on the shared SQLAlchemy engine, writes on `get_connection()`) |
+| [routers/providers.py](../routers/providers.py) | Provider CRUD | `provider_service` (reads and writes on the shared SQLAlchemy engine) |
 | [routers/appointments.py](../routers/appointments.py) | Appointment create, read, list, update, cancel | `appointment_service` (reads on the shared SQLAlchemy engine, writes on `get_connection()`) |
 | [routers/hl7.py](../routers/hl7.py) | `POST /hl7/adt` | `hl7_service` (with `hl7_tracking`) |
 | [routers/fhir.py](../routers/fhir.py) | CapabilityStatement, Patient, Practitioner, PractitionerRole | `patient_service` reads for Patient, identifier reads in `database.py` (both on the shared SQLAlchemy engine); `provider_service` reads (shared SQLAlchemy engine) for Practitioner and PractitionerRole |
@@ -70,26 +70,31 @@ Tests enforce these rules (see
     pool (by default 5 connections plus 5 overflow, a 10 s wait for a free connection, a
     10 s connect timeout), each connection tested before use. They read through
     `db_engine.read_only_connection()`: one transaction per call that PostgreSQL keeps
-    read-only, never committed, rolled back when the connection returns to the pool. Provider writes (create, update, delete)
-    and appointment writes (create, update, cancel) still use `get_connection()`, so the
+    read-only, never committed, rolled back when the connection returns to the pool.
+  - Provider writes (create, update, delete) use `db_engine.write_transaction()`: one
+    read-write transaction per write on the same pool, with the same timeouts, committed
+    when the write succeeds and rolled back when it raises. A provider write that waits
+    longer than the lock timeout, or runs longer than the statement timeout, fails as a
+    plain 500 and changes nothing. The providers router maps the SQLAlchemy-wrapped
+    integrity errors with `db_errors.raise_for_constraint()` to the same 409 responses as
+    before (duplicate email; deleting a provider that has appointments); anything else
+    propagates.
+  - Appointment writes (create, update, cancel) still use `get_connection()`, so the
     overlap rule from migration 005 and its 409 handling are unchanged. So do patient
     writes (REST create, update, delete, each with its audit event on the same
     connection) and HL7 registration and update, including the MRN lookup that runs
-    inside the HL7 registration transaction. Writes on the engine, when they move, will
-    use `db_engine.write_transaction()`: one read-write transaction per block, with the
-    same timeouts, committed when the block ends normally and rolled back on an exception;
-    `db_errors.raise_for_constraint()` maps its SQLAlchemy-wrapped integrity errors to the
-    same 404 and 409 responses as psycopg's own.
+    inside the HL7 registration transaction. When they move, they will use
+    `db_engine.write_transaction()` as the provider writes do.
   - Every engine transaction starts with a transaction-local `statement_timeout` and
     `lock_timeout`: the configured limit (30 s and 5 s by default), or the session's own
     value where that is stricter (0, "disabled", never counts as stricter). They end
     with the transaction. They bound each statement's time in PostgreSQL and each wait
     for a lock; there is no deadline for a whole request or transaction of several
     statements, and they do not bound the wait for a free connection (pool timeout),
-    the connect timeout, or a network stall. `get_connection()` connections, and so all
-    writes (appointment writes included), do not inherit this application-configured,
-    transaction-local policy; existing PostgreSQL server or session timeout settings
-    may still apply to them.
+    the connect timeout, or a network stall. `get_connection()` connections, and so
+    every write except the provider writes (appointment writes included), do not
+    inherit this application-configured, transaction-local policy; existing PostgreSQL
+    server or session timeout settings may still apply to them.
   - Provider search runs its page and its total in one READ COMMITTED transaction, as
     before: each statement sees the data committed when it starts, so a provider added
     or removed in between can make the total disagree with the page.

@@ -1,21 +1,22 @@
 """
 Provider persistence.
 
-Reads (get_all_providers, get_provider_by_id, search_providers) use the shared
-SQLAlchemy engine through db_engine.read_only_connection(): PostgreSQL read-only
-transactions with the engine's statement and lock timeouts. Writes (create, update,
-delete) still use database.get_connection(), unchanged; the providers router translates
-their psycopg constraint errors.
+Everything runs on the shared SQLAlchemy engine with its statement and lock timeouts.
+Reads (get_all_providers, get_provider_by_id, search_providers) use
+db_engine.read_only_connection(): PostgreSQL read-only transactions. Writes (create,
+update, delete) use db_engine.write_transaction(): one read-write transaction per write,
+committed when it succeeds and rolled back when it raises. Their database errors
+propagate as SQLAlchemy errors with the psycopg error in `.orig`; the providers router
+translates the known constraint violations.
 """
 
-from sqlalchemy import bindparam, column, func, select, table
+from sqlalchemy import bindparam, column, delete, func, insert, select, table, update
 
-from database import get_connection
-from db_engine import read_only_connection
+from db_engine import read_only_connection, write_transaction
 from models import ProviderCreate
 
-# The columns the reads select, in the order of the returned dictionaries. Untyped, so
-# values come back exactly as psycopg returns them, as before.
+# The columns the reads select and the writes return, in the order of the returned
+# dictionaries. Untyped, so values come back exactly as psycopg returns them, as before.
 PROVIDERS = table(
     "providers",
     column("id"),
@@ -28,51 +29,27 @@ PROVIDERS = table(
 )
 
 
+def _fields(provider: ProviderCreate) -> dict:
+    """The writable columns, in the order the previous SQL listed them."""
+    return {
+        "first_name": provider.first_name,
+        "last_name": provider.last_name,
+        "specialty": provider.specialty,
+        "email": provider.email,
+        "phone": provider.phone,
+    }
+
+
 def create_provider(provider: ProviderCreate) -> dict:
     """
     Create a new healthcare provider in PostgreSQL.
     """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO providers (
-                    first_name,
-                    last_name,
-                    specialty,
-                    email,
-                    phone
-                )
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING
-                    id,
-                    first_name,
-                    last_name,
-                    specialty,
-                    email,
-                    phone,
-                    created_at
-                """,
-                (
-                    provider.first_name,
-                    provider.last_name,
-                    provider.specialty,
-                    provider.email,
-                    provider.phone,
-                ),
-            )
+    statement = insert(PROVIDERS).values(**_fields(provider)).returning(*PROVIDERS.c)
 
-            row = cur.fetchone()
+    with write_transaction() as conn:
+        row = conn.execute(statement).mappings().one()
 
-    return {
-        "id": row[0],
-        "first_name": row[1],
-        "last_name": row[2],
-        "specialty": row[3],
-        "email": row[4],
-        "phone": row[5],
-        "created_at": row[6],
-    }
+    return dict(row)
 
 
 def get_all_providers() -> list[dict]:
@@ -106,51 +83,17 @@ def update_provider(
     Update an existing healthcare provider.
     Returns None if the provider does not exist.
     """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                UPDATE providers
-                SET
-                    first_name = %s,
-                    last_name = %s,
-                    specialty = %s,
-                    email = %s,
-                    phone = %s
-                WHERE id = %s
-                RETURNING
-                    id,
-                    first_name,
-                    last_name,
-                    specialty,
-                    email,
-                    phone,
-                    created_at
-                """,
-                (
-                    provider.first_name,
-                    provider.last_name,
-                    provider.specialty,
-                    provider.email,
-                    provider.phone,
-                    provider_id,
-                ),
-            )
+    statement = (
+        update(PROVIDERS)
+        .where(PROVIDERS.c.id == provider_id)
+        .values(**_fields(provider))
+        .returning(*PROVIDERS.c)
+    )
 
-            row = cur.fetchone()
+    with write_transaction() as conn:
+        row = conn.execute(statement).mappings().one_or_none()
 
-    if row is None:
-        return None
-
-    return {
-        "id": row[0],
-        "first_name": row[1],
-        "last_name": row[2],
-        "specialty": row[3],
-        "email": row[4],
-        "phone": row[5],
-        "created_at": row[6],
-    }
+    return dict(row) if row is not None else None
 
 
 def delete_provider(provider_id: int) -> bool:
@@ -160,20 +103,12 @@ def delete_provider(provider_id: int) -> bool:
     Returns True if the provider was deleted.
     Returns False if the provider does not exist.
     """
-    with get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                DELETE FROM providers
-                WHERE id = %s
-                RETURNING id
-                """,
-                (provider_id,),
-            )
+    statement = delete(PROVIDERS).where(PROVIDERS.c.id == provider_id).returning(PROVIDERS.c.id)
 
-            deleted_row = cur.fetchone()
+    with write_transaction() as conn:
+        deleted_id = conn.execute(statement).scalar_one_or_none()
 
-    return deleted_row is not None
+    return deleted_id is not None
 
 
 def search_providers(

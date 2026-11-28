@@ -96,8 +96,17 @@ session `statement_timeout` as a second bound.
 through psycopg (rows, order, totals, keys, value types, adversarial search values),
 checks the read-only transaction and connection release, a plain 500 when the pool is
 exhausted (a one-connection pool with a 1 s wait; this is not a load test), the FHIR
-resources and bundles, and provider writes through `get_connection()` alongside pooled
-reads. `tests/test_appointment_reads.py` does the same for the appointment reads with
+resources and bundles, and provider writes alternating with pooled reads.
+`tests/test_provider_writes.py` covers the provider writes with fixed expectations, run
+against the previous `get_connection()` implementation before the change: the returned
+dictionaries and persisted rows, `None` and `False` for missing providers, rejected writes
+that name their constraint and persist nothing, the REST status codes and bodies, and
+concurrent writers (a duplicate email waiting for the first writer's commit or rollback,
+a delete waiting for a new appointment). It also checks what the move adds: one managed
+read-write transaction per write with the engine's timeouts, rollback of the write when
+its block fails, the SQLAlchemy-wrapped errors with a clean pooled connection afterwards,
+and a plain 500 that changes nothing after the lock timeout.
+`tests/test_appointment_reads.py` does the same for the appointment reads with
 fixed expected results (order by start time then id, each filter and their combinations,
 `0` and empty values as real filters, case-sensitive status, timezone-aware values), the
 return contract (a plain list of plain dicts, or a plain dict or `None`, every row read

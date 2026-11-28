@@ -5,8 +5,9 @@ The expected results come from the pre-Phase 2 SQL (unchanged apart from whitesp
 through psycopg on a separate, identity-checked connection. So these tests show that
 moving get_all_providers, get_provider_by_id and search_providers onto the engine
 changed neither the rows, their order, the totals, the dictionary keys nor the value
-types, including for adversarial search values. Provider writes stay on
-database.get_connection(); the mixed-path tests use both.
+types, including for adversarial search values. Provider writes run in
+db_engine.write_transaction() (tests/test_provider_writes.py); the mixed-path tests
+alternate them with the reads.
 """
 
 import os
@@ -468,7 +469,7 @@ def test_fhir_search_bundles_match_the_legacy_search(
     ]
 
 
-# --- legacy writes and pooled reads together ----------------------------------------------
+# --- writes and pooled reads together -----------------------------------------------------
 
 
 def synthetic(last_name, email):
@@ -481,14 +482,14 @@ def synthetic(last_name, email):
     )
 
 
-def test_a_legacy_write_is_visible_to_the_next_pooled_read():
+def test_a_write_is_visible_to_the_next_pooled_read():
     created = create_provider(synthetic("Pathway", "mixed.pathway@example.org"))
 
     assert get_provider_by_id(created["id"]) == created
     assert search_providers(family="Pathway") == ([created], 1)
 
 
-def test_pooled_reads_and_legacy_writes_alternate_without_interference(direct):
+def test_pooled_reads_and_writes_alternate_without_interference(direct):
     created = create_provider(synthetic("Before", "mixed.before@example.org"))
     assert get_all_providers() == [created]
 
